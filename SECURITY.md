@@ -4,7 +4,9 @@
 
 | Version | Supported |
 | --- | --- |
-| 0.2.x | Yes |
+| 0.4.x | Yes |
+| 0.3.x | Yes |
+| 0.2.x | No |
 | Earlier versions | No |
 
 ## Reporting a Vulnerability
@@ -23,3 +25,8 @@ remediation guidance after a fix is available.
 
 Issues in the Python PaperBrain backend should be reported privately to that
 project rather than in this plugin repository.
+
+The controlled installer executes only fixed Miniforge and PaperBrain release
+assets after SHA-256 verification and explicit confirmation. Reports involving
+checksum validation, installer path ownership, process execution, package
+sources, or managed-runtime cleanup are security issues for this plugin.

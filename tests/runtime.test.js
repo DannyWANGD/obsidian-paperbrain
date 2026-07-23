@@ -9,6 +9,7 @@ const {
   buildInvocation,
   buildSpawnOptions,
   buildSiblingInvocation,
+  condaExecutableCandidates,
   detectVaultPath,
   detectBackendPath,
   detectWdPython,
@@ -56,7 +57,7 @@ test("legacy repoPath migrates to backendPath without replacing the vault", () =
   assert.equal(settings.repoPath, undefined);
 });
 
-test("settings v2 migrate to v3 without losing user choices", () => {
+test("settings v2 migrate to v4 without losing user choices", () => {
   const settings = normalizeRuntimeSettings({
     settingsVersion: 2,
     backendPath: "D:\\backend",
@@ -64,10 +65,26 @@ test("settings v2 migrate to v3 without losing user choices", () => {
     provider: "doubao",
     paidRunDisclosureAccepted: true,
   });
-  assert.equal(settings.settingsVersion, 3);
+  assert.equal(settings.settingsVersion, 4);
   assert.equal(settings.backendPath, "D:\\backend");
   assert.equal(settings.provider, "doubao");
   assert.equal(settings.paidRunDisclosureAccepted, true);
+  assert.equal(settings.condaPath, "");
+  assert.equal(settings.managedRuntimePath, "");
+});
+
+test("Conda detection candidates prioritize the saved executable before environment and PATH", () => {
+  const candidates = condaExecutableCandidates({
+    savedPath: "D:\\preferred\\Scripts\\conda.exe",
+    pythonPath: "D:\\preferred\\envs\\wd\\python.exe",
+    env: { CONDA_EXE: "D:\\active\\Scripts\\conda.exe" },
+    home: "D:\\home",
+    platform: "win32",
+    pathApi: path.win32,
+  });
+  assert.equal(candidates[0], "D:\\preferred\\Scripts\\conda.exe");
+  assert.equal(candidates[1], "D:\\active\\Scripts\\conda.exe");
+  assert.equal(candidates[2], "conda");
 });
 
 test("wd Python detection follows saved, current Conda, then env-list order", () => {
@@ -268,7 +285,7 @@ test("diagnostic copies redact credentials and local absolute paths without muta
     api_key: "top-secret",
     message: "Authorization=Bearer abc.def and token=visible",
     artifact: "D:\\Private Vault\\Research_Notes\\Paper.md",
-    nested: ["sk-abcdefghijklmnop", "/home/researcher/vault/Paper.md"],
+    nested: [`sk-${"abcdefghijklmnop"}`, "/home/researcher/vault/Paper.md"],
   };
   const redacted = redactDiagnostics(source, ["D:\\Private Vault"]);
   const serialized = JSON.stringify(redacted);

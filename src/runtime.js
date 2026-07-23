@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 const EXECUTION_MODES = new Set(["auto", "cli", "python-script"]);
 const MIN_BACKEND_VERSION = [0, 3, 1];
 const MAX_BACKEND_VERSION = [0, 4, 0];
@@ -67,6 +67,43 @@ function pythonExecutableForEnv(envPath, platform = process.platform, pathApi = 
   return platform === "win32"
     ? pathApi.join(root, "python.exe")
     : pathApi.join(root, "bin", "python");
+}
+
+function cliExecutableForEnv(envPath, platform = process.platform, pathApi = path) {
+  const root = textValue(envPath);
+  if (!root) return "";
+  return platform === "win32"
+    ? pathApi.join(root, "Scripts", "paperbrain.exe")
+    : pathApi.join(root, "bin", "paperbrain");
+}
+
+function condaExecutableCandidates(options = {}) {
+  const pathApi = options.pathApi || path;
+  const platform = options.platform || process.platform;
+  const env = options.env || process.env;
+  const home = textValue(options.home);
+  const candidates = [textValue(options.savedPath), textValue(env.CONDA_EXE), "conda"];
+  const pythonPath = textValue(options.pythonPath);
+  if (pythonPath) {
+    const envRoot = platform === "win32"
+      ? pathApi.dirname(pathApi.dirname(pythonPath))
+      : pathApi.dirname(pathApi.dirname(pathApi.dirname(pythonPath)));
+    const condaRoot = pathApi.dirname(envRoot);
+    candidates.push(platform === "win32"
+      ? pathApi.join(condaRoot, "Scripts", "conda.exe")
+      : pathApi.join(condaRoot, "bin", "conda"));
+  }
+  if (home) {
+    candidates.push(platform === "win32"
+      ? pathApi.join(home, ".paperbrain", "runtime", "miniforge3", "Scripts", "conda.exe")
+      : pathApi.join(home, ".paperbrain", "runtime", "miniforge3", "bin", "conda"));
+    for (const folder of ["miniforge3", "miniconda3", "anaconda3"]) {
+      candidates.push(platform === "win32"
+        ? pathApi.join(home, folder, "Scripts", "conda.exe")
+        : pathApi.join(home, folder, "bin", "conda"));
+    }
+  }
+  return [...new Set(candidates.filter(Boolean))];
 }
 
 function parseCondaEnvironmentList(value) {
@@ -147,6 +184,10 @@ function normalizeRuntimeSettings(raw = {}, options = {}) {
     cancelTimeoutSeconds: Math.max(3, Number(raw.cancelTimeoutSeconds) || 20),
     lastPreset: textValue(raw.lastPreset) || "daily",
     paidRunDisclosureAccepted: Boolean(raw.paidRunDisclosureAccepted),
+    condaPath: textValue(raw.condaPath),
+    installerManaged: Boolean(raw.installerManaged),
+    installedBackendVersion: textValue(raw.installedBackendVersion),
+    managedRuntimePath: textValue(raw.managedRuntimePath),
   };
 }
 
@@ -488,6 +529,8 @@ module.exports = {
   buildInvocation,
   buildSiblingInvocation,
   buildSpawnOptions,
+  cliExecutableForEnv,
+  condaExecutableCandidates,
   defaultPythonCommand,
   detectBackendPath,
   detectWdPython,

@@ -28,9 +28,28 @@ test("package, manifest, and compatibility versions stay aligned", () => {
 });
 
 test("release runtime assets and canonical source files exist", () => {
-  for (const name of ["main.js", "manifest.json", "styles.css", "src/main.js", "src/runtime.js", "src/process-manager.js"]) {
+  for (const name of [
+    "main.js", "manifest.json", "styles.css", "src/main.js", "src/runtime.js", "src/process-manager.js",
+    "src/backend-installer.js", "src/backend-release.js", "src/miniforge-release.js",
+  ]) {
     assert.equal(fs.existsSync(path.join(root, name)), true, `${name} should exist`);
   }
+});
+
+test("one-click installer assets are versioned, checksummed, and documented", () => {
+  const { BACKEND_RELEASE } = require("../src/backend-release");
+  const { MINIFORGE_RELEASE } = require("../src/miniforge-release");
+  for (const asset of [
+    ...Object.values(BACKEND_RELEASE.assets),
+    ...Object.values(MINIFORGE_RELEASE.assets),
+  ]) {
+    assert.match(asset.sha256, /^[a-f0-9]{64}$/, `${asset.name} needs a fixed SHA-256`);
+  }
+  const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+  assert.match(readme, /Install backend/);
+  assert.match(readme, /Miniforge 26\.3\.2-2/);
+  assert.match(readme, /does not modify\s+(?:the )?system PATH/i);
+  assert.match(readme, /~\/\.paperbrain\/runtime\/miniforge3/);
 });
 
 test("optional companion plugin snapshot stays versioned and dependency-free", () => {

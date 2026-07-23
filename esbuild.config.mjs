@@ -8,7 +8,7 @@ await build({
   entryPoints: [join(root, "src", "main.js")],
   outfile: join(root, "main.js"),
   bundle: true,
-  external: ["obsidian"],
+  external: ["obsidian", "electron"],
   platform: "node",
   format: "cjs",
   target: "node18",

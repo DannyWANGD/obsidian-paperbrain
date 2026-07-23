@@ -1,13 +1,14 @@
 # PaperBrain Console
 
 PaperBrain Console is an Obsidian desktop control surface for the external
-[PaperBrain Python pipeline](https://github.com/DannyWANGD/Cutting-edge_Paper_Reading).
+[PaperBrain Python pipeline](https://github.com/DannyWANGD/PaperBrain).
 It starts and stops pipeline commands, shows run progress and errors, and opens
 the digests, briefs, notes, and PDFs written into the active vault.
 
-The Python backend is not bundled with this plugin. PaperBrain Console is a
-desktop-only integration because it starts a local child process and reads
-files outside Obsidian's mobile sandbox.
+The release keeps the Python backend separate from the Obsidian JavaScript
+bundle, but the console provides a controlled one-click installer. PaperBrain
+Console is desktop-only because it starts local child processes and reads files
+outside Obsidian's mobile sandbox.
 
 The MIT License in this repository covers only the plugin code. The external
 backend, papers, model services, and generated or downloaded content remain
@@ -15,26 +16,29 @@ subject to their own licenses and terms.
 
 ## Quick Start
 
-If PaperBrain and the `wd` Conda environment already work on this computer,
-plugin setup is three steps:
-
 1. In BRAT, choose **Add beta plugin** and enter
    `https://github.com/DannyWANGD/obsidian-paperbrain`.
-2. Open PaperBrain Console and select **Detect again**. The plugin finds the
-   saved backend/current vault and the existing `wd` Python environment.
-3. Select **Validate setup**, then choose a run mode and select **Run**.
+2. Enable **PaperBrain Console**, open it, and select **Install backend**.
+3. Review the exact local and network changes, then select **Install backend**
+   in the confirmation dialog. Existing Conda is preferred. If Conda is not
+   available, the same action installs a private, verified Miniforge runtime.
+4. Select **Open API key file**, replace the placeholder for your provider,
+   and save the file.
+5. Select **Validate setup**, choose a run mode, and select **Run**.
 
-That is the complete normal installation flow. PaperBrain does not require any
-other Obsidian plugin. The companion plugins documented later are optional.
-Only users who do not yet have the external PaperBrain pipeline need the
-one-time backend setup below.
+No terminal command, repository clone, or separate Python installation is
+required for this normal desktop flow. PaperBrain does not require any other
+Obsidian plugin; the companion plugins documented later are optional.
 
 ## Requirements
 
 - Obsidian desktop 1.5.0 or later
-- A compatible PaperBrain backend version 0.3.1 or later in the 0.3.x series
-- Python 3.9 or later when using a backend checkout
+- Approximately 1 GB of free disk space for the managed runtime and packages
+- Network access to GitHub Releases, conda-forge, and PyPI during installation
 - An API account and key for the LLM provider selected in the backend
+
+Advanced users can instead supply a compatible PaperBrain backend in the
+0.3.x series and Python 3.9 or later.
 
 ## Beta Installation Details
 
@@ -54,33 +58,49 @@ For a manual installation:
 
 Do not mix files from different release versions.
 
-## One-Time Backend Setup
+## Controlled Backend Installer
 
-Skip this section when your existing PaperBrain backend already runs in `wd`.
-For a new machine, clone and prepare the backend separately from the plugin.
-From the backend repository root:
+**Install backend** always checks saved, active, PATH, inferred, and common
+Conda locations first. When a working Conda installation is found, it is reused
+and the installer creates or reuses its environment named `wd`.
 
-```bash
-conda create -n wd python=3.10 -y
-conda activate wd
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
+When no Conda installation works, PaperBrain downloads Miniforge 26.3.2-2 from
+the official conda-forge GitHub Release and installs it under
+`~/.paperbrain/runtime/miniforge3`. This private installation does not modify
+system PATH, initialize a shell, register system Python, or require an
+administrator account. Windows x64, macOS x64/arm64, and Linux x64/arm64 are
+supported. Windows arm64 is not currently supported by this automatic path.
 
-All backend commands and development checks in this project assume the `wd`
-Conda environment. An editable install registers the `paperbrain` command and
-also supports the plugin's Python script mode. Configure the backend YAML and
-environment values as described by the backend project. Keep API keys in its
-`.env` file or the operating-system environment, never in this plugin
-repository.
+The installer then:
+
+1. Creates or reuses `wd` with Python 3.10.
+2. Downloads the fixed PaperBrain backend wheel and hash-locked requirements
+   from the `backend-0.3.4` GitHub Release.
+3. Verifies every downloaded installer or backend asset against an embedded
+   SHA-256 value before executing or installing it.
+4. Installs locked dependencies from `https://pypi.org/simple` and installs the
+   backend wheel without resolving unpinned dependencies.
+5. Creates configuration under `~/.paperbrain/config` and points it at the
+   active vault. Existing configuration and `.env` values are preserved.
+
+The confirmation dialog appears before any download or environment change.
+Installation progress and failures remain visible in the console, and failed
+temporary downloads are removed. The plugin never asks for, reads, or stores
+the API key in Obsidian settings.
+
+To remove a PaperBrain-managed installation, close Obsidian and delete
+`~/.paperbrain/runtime/miniforge3` and, if no longer needed,
+`~/.paperbrain/config`. Do not delete an existing external Conda installation
+that PaperBrain merely reused.
 
 ## Configure PaperBrain Console
 
 Open **Settings -> Community plugins -> PaperBrain Console** and use
-**Detect again** once, then **Validate setup**. Detection checks only the saved
-backend directory, the active vault, the current Conda environment, and the
-`wd` entry returned by `conda env list --json`. It never scans other drives,
-creates an environment, installs packages, or stores an API key.
+**Install or repair** for first-time setup, then **Validate setup**. Detection
+checks only the saved backend directory, the active vault, current and common
+Conda locations, and the `wd` entry returned by `conda env list --json`. It
+never scans entire drives or stores an API key. Package installation occurs
+only after the explicit installer confirmation.
 
 - **Backend directory** is the checkout containing `script/paperbrain.py`.
 - **wd Python** is the absolute Python executable in the existing `wd` Conda
@@ -114,6 +134,9 @@ store API keys.
 
 When you initiate an action, the plugin can:
 
+- after explicit confirmation, download fixed Miniforge and PaperBrain release
+  assets, verify their checksums, run the unattended Miniforge installer when
+  Conda is absent, create `wd`, and install locked packages from PyPI;
 - start a configured local executable and send it PaperBrain CLI arguments;
 - read run records and generated artifacts under the configured vault;
 - read the configured backend and config paths to validate them;
@@ -144,6 +167,7 @@ egress design before PDF and resource-link validation will work.
 
 | Plugin | PaperBrain backend | Obsidian |
 | --- | --- | --- |
+| 0.4.x | 0.3.1 to <0.4.0; installer selects 0.3.4 | 1.5.0 or later, desktop |
 | 0.3.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 | 0.2.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
@@ -152,6 +176,11 @@ contract. Keep both sides within a tested row of this table.
 
 ## Troubleshooting
 
+- If installation fails, keep the console open and retry **Install backend**.
+  Incomplete managed Miniforge files and temporary downloads are removed before
+  a controlled retry.
+- Corporate firewalls must allow GitHub Release downloads, conda-forge package
+  channels, and `https://pypi.org/simple`. Checksum failures are never bypassed.
 - If validation cannot resolve `paperbrain`, set the CLI executable to its
   absolute path. GUI applications often receive a different `PATH` than a
   terminal.

@@ -669,6 +669,28 @@
   font-size: 12px;
 }
 
+.paperbrain-install-status {
+  display: grid;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-3);
+  padding-top: var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.paperbrain-install-status pre {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--size-4-2);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-small);
+}
+
 .paperbrain-setup-errors {
   padding: 10px 0;
 }

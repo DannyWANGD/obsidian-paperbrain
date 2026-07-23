@@ -5,6 +5,30 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-23
+
+### Added
+
+- A confirmed, one-click backend installer that prioritizes an existing Conda
+  installation and creates or reuses its isolated `wd` environment.
+- Automatic private Miniforge 26.3.2-2 installation when Conda is unavailable,
+  without system PATH changes, shell initialization, or administrator access.
+- Fixed release manifests and SHA-256 verification for every Miniforge,
+  PaperBrain wheel, and locked-requirements download.
+- Managed configuration bootstrap under `~/.paperbrain/config`, with existing
+  files and API key values preserved.
+- Installer lifecycle tests covering existing Conda reuse, the no-Conda path,
+  environment creation, and checksum rejection.
+
+### Changed
+
+- New-computer setup now starts with **Install backend** inside Obsidian; a
+  repository clone and terminal-based Python installation are no longer part of
+  the normal BRAT flow.
+- Setup and security documentation now disclose installer destinations,
+  network sources, supported architectures, cleanup, and external-runtime
+  behavior.
+
 ## [0.3.0] - 2026-07-23
 
 ### Added
@@ -67,6 +91,7 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/DannyWANGD/obsidian-paperbrain/releases/tag/0.2.0

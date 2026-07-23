@@ -1,10 +1,12 @@
-const { ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, normalizePath, setIcon } = require("obsidian");
+const { ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, normalizePath, requestUrl, setIcon } = require("obsidian");
 const childProcess = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const {
   buildInvocation,
   buildSpawnOptions,
+  condaExecutableCandidates,
   detectBackendPath,
   detectVaultPath,
   detectWdPython,
@@ -17,11 +19,14 @@ const {
   yesterday,
 } = require("./runtime");
 const { ProcessManager } = require("./process-manager");
+const { BackendInstaller } = require("./backend-installer");
+const { BACKEND_RELEASE } = require("./backend-release");
+const { MINIFORGE_RELEASE, resolveMiniforgeAsset } = require("./miniforge-release");
 
 const VIEW_TYPE = "paperbrain-console-view";
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 3,
+  settingsVersion: 4,
   executionMode: "auto",
   cliPath: "",
   pythonPath: "",
@@ -33,6 +38,10 @@ const DEFAULT_SETTINGS = {
   cancelTimeoutSeconds: 20,
   lastPreset: "daily",
   paidRunDisclosureAccepted: false,
+  condaPath: "",
+  installerManaged: false,
+  installedBackendVersion: "",
+  managedRuntimePath: "",
 };
 
 const PANELS = [
@@ -143,6 +152,14 @@ module.exports = class PaperBrainPlugin extends Plugin {
       inferStage: inferStageFromOutput,
       onNotice: ({ ok, message }) => new Notice(message, ok ? 5000 : 8000),
     });
+    this.backendInstaller = new BackendInstaller({
+      spawn: childProcess.spawn,
+      download: async (url) => {
+        const response = await requestUrl({ url, method: "GET", throw: false });
+        if (response.status !== 200) throw new Error(`Download failed with HTTP ${response.status}: ${url}`);
+        return Buffer.from(response.arrayBuffer);
+      },
+    });
     const firstStart = !stored.settingsVersion;
     const migratedLegacyPath = Boolean(stored.repoPath && !stored.backendPath);
     const migratedSettings = stored.settingsVersion !== DEFAULT_SETTINGS.settingsVersion;
@@ -178,6 +195,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
   }
 
   async onunload() {
+    if (this.backendInstaller) this.backendInstaller.dispose();
     if (this.processManager) this.processManager.dispose("plugin unload");
     for (const view of this.views || []) view.dispose();
     if (this.views) this.views.clear();
@@ -213,9 +231,10 @@ module.exports = class PaperBrainPlugin extends Plugin {
   }
 
   async detectSetup() {
+    const condaPath = await this.detectCondaExecutable();
     let condaJson = "";
     try {
-      condaJson = await execFileText(process.env.CONDA_EXE || "conda", ["env", "list", "--json"]);
+      condaJson = await execFileText(condaPath || "conda", ["env", "list", "--json"]);
     } catch (_) {
       // A saved or currently active wd environment can still be detected without conda on PATH.
     }
@@ -232,9 +251,106 @@ module.exports = class PaperBrainPlugin extends Plugin {
     });
     if (backendPath) this.settings.backendPath = backendPath;
     if (python.path) this.settings.pythonPath = python.path;
+    if (condaPath) this.settings.condaPath = condaPath;
     this.settings.executionMode = backendPath ? "python-script" : this.settings.executionMode;
     await this.saveSettings();
-    return { backendPath, pythonPath: python.path, pythonSource: python.source };
+    return { backendPath, pythonPath: python.path, pythonSource: python.source, condaPath };
+  }
+
+  async detectCondaExecutable() {
+    const candidates = condaExecutableCandidates({
+      savedPath: this.settings.condaPath,
+      pythonPath: this.settings.pythonPath,
+      env: process.env,
+      home: os.homedir(),
+    });
+    for (const candidate of candidates) {
+      try {
+        await execFileText(candidate, ["--version"]);
+        const payload = JSON.parse(await execFileText(candidate, ["env", "list", "--json"]));
+        if (!payload || !Array.isArray(payload.envs)) continue;
+        return candidate;
+      } catch (_) {
+        // Continue through explicit, environment, PATH, inferred, and common locations.
+      }
+    }
+    return "";
+  }
+
+  async installBackend() {
+    if (this.processManager.snapshot().running) {
+      new Notice("Stop the active PaperBrain run before installing the backend.");
+      return false;
+    }
+    if (this.backendInstaller.snapshot().running) {
+      new Notice("PaperBrain backend installation is already running.");
+      return false;
+    }
+    const condaPath = await this.detectCondaExecutable();
+    const miniforgeAsset = resolveMiniforgeAsset(process.platform, process.arch);
+    if (!condaPath && !miniforgeAsset) {
+      new Notice(`Automatic runtime installation is not available for ${process.platform}/${process.arch}.`, 9000);
+      return false;
+    }
+    const configDir = path.join(os.homedir(), ".paperbrain", "config");
+    const managedRuntimePath = path.join(os.homedir(), ".paperbrain", "runtime", "miniforge3");
+    const accepted = await confirmBackendInstall(this.app, {
+      condaPath,
+      configDir,
+      managedRuntimePath,
+      miniforgeRelease: MINIFORGE_RELEASE,
+      miniforgeAsset,
+      vaultPath: this.settings.vaultPath,
+      release: BACKEND_RELEASE,
+    });
+    if (!accepted) return false;
+    const result = await this.backendInstaller.install({
+      condaExecutable: condaPath,
+      configDir,
+      vaultPath: this.settings.vaultPath,
+      release: BACKEND_RELEASE,
+      miniforge: {
+        release: MINIFORGE_RELEASE,
+        asset: miniforgeAsset,
+        installDir: managedRuntimePath,
+      },
+    });
+    if (!result.ok) {
+      new Notice("PaperBrain backend installation failed. See the console log for details.", 9000);
+      return false;
+    }
+    Object.assign(this.settings, {
+      settingsVersion: 4,
+      executionMode: "cli",
+      cliPath: result.cliPath,
+      pythonPath: result.pythonPath,
+      backendPath: "",
+      configPath: result.configPath,
+      condaPath: result.condaPath,
+      installerManaged: true,
+      installedBackendVersion: result.version,
+      managedRuntimePath: result.managedRuntimePath,
+    });
+    await this.saveSettings();
+    new Notice("PaperBrain backend is ready. Add your provider key to .env, then validate setup.", 9000);
+    return true;
+  }
+
+  openManagedEnvFile() {
+    const envPath = this.settings.configPath ? path.join(path.dirname(this.settings.configPath), ".env") : "";
+    if (!envPath || !fs.existsSync(envPath)) {
+      new Notice("The managed .env file does not exist. Install or repair the backend first.");
+      return;
+    }
+    if (process.platform === "win32") {
+      const editor = childProcess.spawn("notepad.exe", [envPath], { detached: true, windowsHide: false, stdio: "ignore" });
+      editor.once("error", () => new Notice("Unable to open the PaperBrain .env file in Notepad."));
+      editor.unref();
+      return;
+    }
+    require("electron").shell.openPath(envPath).then((error) => {
+      if (error) new Notice("Unable to open the PaperBrain .env file.");
+    });
   }
 
   openSettings() {
@@ -243,6 +359,10 @@ module.exports = class PaperBrainPlugin extends Plugin {
   }
 
   async validateSetup() {
+    if (this.backendInstaller.snapshot().running) {
+      new Notice("Wait for backend installation to finish before validating setup.");
+      return false;
+    }
     await this.detectSetup();
     const validation = this.validateConfiguration(false);
     if (!validation.ok) {
@@ -286,7 +406,9 @@ class PaperBrainConsoleView extends ItemView {
     this.plugin = plugin;
     this.disposed = false;
     this.processUnsubscribe = null;
+    this.installerUnsubscribe = null;
     this.runtime = plugin.processManager.snapshot();
+    this.installerRuntime = plugin.backendInstaller.snapshot();
     this.state = null;
     this.stateFingerprint = "";
     this.pollInFlight = false;
@@ -342,6 +464,10 @@ class PaperBrainConsoleView extends ItemView {
       this.runtime = snapshot;
       this.handleProcessEvent(event);
     });
+    this.installerUnsubscribe = this.plugin.backendInstaller.subscribe((snapshot) => {
+      this.installerRuntime = snapshot;
+      if (!this.disposed) this.render();
+    });
     this.restoreRunContext();
     await Promise.all([this.loadState({ force: true }), this.loadRunHistory()]);
     if (this.process) this.startPolling();
@@ -359,6 +485,8 @@ class PaperBrainConsoleView extends ItemView {
     this.stopPolling();
     if (this.processUnsubscribe) this.processUnsubscribe();
     this.processUnsubscribe = null;
+    if (this.installerUnsubscribe) this.installerUnsubscribe();
+    this.installerUnsubscribe = null;
   }
 
   restoreRunContext() {
@@ -656,7 +784,7 @@ class PaperBrainConsoleView extends ItemView {
   renderSetupGuide(parent, validation) {
     const section = parent.createDiv({ cls: "paperbrain-section paperbrain-setup" });
     section.createEl("h3", { text: "Finish setup" });
-    section.createEl("p", { cls: "paperbrain-muted", text: "PaperBrain checks existing local tools only. It will not create environments, install packages, or store API keys." });
+    section.createEl("p", { cls: "paperbrain-muted", text: "Install the fixed PaperBrain backend into wd, then add your provider key and validate. Every system change requires confirmation." });
     const backendReady = Boolean(detectBackendPath({
       savedPath: this.plugin.settings.backendPath,
       vaultPath: this.plugin.settings.vaultPath,
@@ -668,9 +796,9 @@ class PaperBrainConsoleView extends ItemView {
       existsSync: fs.existsSync,
     }).path);
     [
-      ["1", "Backend", backendReady ? "Found script/paperbrain.py." : "Choose a backend checkout containing script/paperbrain.py."],
-      ["2", "wd Python", pythonReady ? "The wd Python executable is ready." : "Activate or create the wd Conda environment outside Obsidian, then detect again."],
-      ["3", "Provider diagnostics", "Validate setup runs doctor config, env, and llm locally without --live."],
+      ["1", "Backend runtime", backendReady || pythonReady ? "A local PaperBrain runtime was detected." : "Use Install backend to create or reuse wd and install the verified backend release."],
+      ["2", "Provider key", this.plugin.settings.installerManaged ? "Open the managed .env file and replace the placeholder key." : "API keys stay in a local .env file or operating-system environment, never in plugin settings."],
+      ["3", "Provider diagnostics", "Validate setup runs doctor config, env, and llm locally without --live or model charges."],
     ].forEach(([numberText, title, detail]) => {
       const item = section.createDiv({ cls: "paperbrain-setup-step" });
       item.createEl("strong", { text: numberText, attr: { "aria-hidden": "true" } });
@@ -681,6 +809,19 @@ class PaperBrainConsoleView extends ItemView {
     const errors = section.createDiv({ cls: "paperbrain-setup-errors", attr: { role: "status" } });
     validation.errors.forEach((error) => errors.createEl("div", { text: error }));
     const actions = section.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
+    const installButton = actions.createEl("button", { text: this.installerRuntime.running ? "Installing backend" : "Install backend" });
+    installButton.addClass("paperbrain-primary");
+    installButton.disabled = this.installerRuntime.running || this.process;
+    installButton.addEventListener("click", async () => {
+      await this.plugin.installBackend();
+      this.render();
+    });
+    if (this.installerRuntime.running) {
+      const stopInstall = actions.createEl("button", { text: "Stop installation" });
+      stopInstall.addClass("paperbrain-danger");
+      stopInstall.disabled = this.installerRuntime.stopping;
+      stopInstall.addEventListener("click", () => this.plugin.backendInstaller.stop());
+    }
     actions.createEl("button", { text: "Detect again" }).addEventListener("click", async () => {
       const result = await this.plugin.detectSetup();
       this.form.provider = this.plugin.settings.provider;
@@ -699,8 +840,16 @@ class PaperBrainConsoleView extends ItemView {
       await this.runDoctorSequence();
     });
     const recovery = section.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
-    recovery.createEl("button", { text: "Open settings" }).addEventListener("click", () => this.plugin.openSettings());
+    if (this.plugin.settings.installerManaged) {
+      recovery.createEl("button", { text: "Open API key file" }).addEventListener("click", () => this.plugin.openManagedEnvFile());
+    }
+      recovery.createEl("button", { text: "Open settings" }).addEventListener("click", () => this.plugin.openSettings());
     recovery.createEl("button", { text: "Copy redacted diagnostics" }).addEventListener("click", () => this.copyDiagnostics());
+    if (this.installerRuntime.logs) {
+      const installStatus = section.createDiv({ cls: "paperbrain-install-status", attr: { role: "status", "aria-live": "polite" } });
+      installStatus.createEl("strong", { text: `Backend installation: ${this.installerRuntime.stage}` });
+      installStatus.createEl("pre", { text: this.installerRuntime.logs });
+    }
   }
 
   renderPresetSelect(parent) {
@@ -1458,6 +1607,10 @@ class PaperBrainConsoleView extends ItemView {
 
   async spawnPaperBrain(commandArgs, options = {}) {
     if (this.disposed) return;
+    if (this.installerRuntime.running) {
+      new Notice("Wait for backend installation to finish before running PaperBrain.");
+      return null;
+    }
     if (this.process) {
       new Notice("PaperBrain is already running.");
       return null;
@@ -1648,6 +1801,14 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.activateView();
           await this.plugin.validateSetup();
           this.display();
+        }))
+      .addButton((button) => button
+        .setButtonText(this.plugin.backendInstaller.snapshot().running ? "Installing" : "Install or repair")
+        .setDisabled(this.plugin.backendInstaller.snapshot().running)
+        .onClick(async () => {
+          await this.plugin.activateView();
+          await this.plugin.installBackend();
+          this.display();
         }));
     new Setting(containerEl)
       .setName("Backend directory")
@@ -1680,6 +1841,16 @@ class PaperBrainSettingTab extends PluginSettingTab {
         }));
     const advanced = containerEl.createEl("details", { cls: "paperbrain-settings-advanced" });
     advanced.createEl("summary", { text: "Advanced" });
+    new Setting(advanced)
+      .setName("Conda executable")
+      .setDesc("Optional absolute path to conda. Detection also checks the active environment, wd Python location, PATH, and common user installs.")
+      .addText((input) => input
+        .setPlaceholder(process.platform === "win32" ? "...\\Scripts\\conda.exe" : ".../bin/conda")
+        .setValue(this.plugin.settings.condaPath)
+        .onChange(async (value) => {
+          this.plugin.settings.condaPath = value.trim();
+          await this.plugin.saveSettings();
+        }));
     new Setting(advanced)
       .setName("Execution mode")
       .setDesc("Auto uses a backend script when found, otherwise the installed PaperBrain CLI.")
@@ -1789,6 +1960,67 @@ class RunConfirmationModal extends Modal {
 
 function confirmRun(app, details) {
   return new Promise((resolve) => new RunConfirmationModal(app, details, resolve).open());
+}
+
+class BackendInstallConfirmationModal extends Modal {
+  constructor(app, details, resolve) {
+    super(app);
+    this.details = details;
+    this.resolve = resolve;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Install PaperBrain backend ${this.details.release.version}` });
+    contentEl.createEl("p", {
+      text: "PaperBrain will make the following local and network changes only after you continue:",
+    });
+    const list = contentEl.createEl("ul");
+    if (this.details.condaPath) {
+      list.createEl("li", { text: `Reuse the detected Conda installation: ${this.details.condaPath}.` });
+    } else {
+      const sizeMiB = Math.ceil(this.details.miniforgeAsset.size / 1024 / 1024);
+      list.createEl("li", {
+        text: `No Conda installation was found. Download verified Miniforge ${this.details.miniforgeRelease.version} (${sizeMiB} MiB) from conda-forge.`,
+      });
+      list.createEl("li", {
+        text: `Install it privately under ${this.details.managedRuntimePath} without changing PATH or registering system Python.`,
+      });
+    }
+    list.createEl("li", { text: "Create or reuse the isolated Conda environment wd with Python 3.10." });
+    list.createEl("li", { text: "Download the fixed wheel and locked dependency file from the PaperBrain GitHub Release." });
+    list.createEl("li", { text: "Verify both downloads with embedded SHA-256 checksums before execution." });
+    list.createEl("li", { text: "Install exact locked dependencies from https://pypi.org into wd; this may take several minutes." });
+    list.createEl("li", { text: `Create configuration under ${this.details.configDir}; existing .env content is preserved.` });
+    list.createEl("li", { text: `Write generated papers only to the active vault: ${this.details.vaultPath}.` });
+    contentEl.createEl("p", {
+      cls: "paperbrain-muted",
+      text: "No API key is requested or stored by the plugin. You will add it to the local .env file after installation.",
+    });
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.closeWith(false));
+    const confirm = actions.createEl("button", { text: "Install backend" });
+    confirm.addClass("mod-cta");
+    confirm.addEventListener("click", () => this.closeWith(true));
+    requestAnimationFrame(() => confirm.focus());
+  }
+
+  closeWith(value) {
+    if (this.resolve) this.resolve(value);
+    this.resolve = null;
+    this.close();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (this.resolve) this.resolve(false);
+    this.resolve = null;
+  }
+}
+
+function confirmBackendInstall(app, details) {
+  return new Promise((resolve) => new BackendInstallConfirmationModal(app, details, resolve).open());
 }
 
 function execFileText(executable, args) {
