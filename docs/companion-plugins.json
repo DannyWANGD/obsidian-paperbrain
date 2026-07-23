@@ -12,5 +12,9 @@
     { "id": "smart-connections", "version": "4.1.8", "role": "semantic-exploration" },
     { "id": "copilot", "version": "3.2.3", "role": "note-question-answering" },
     { "id": "realclaudian", "version": "2.0.24", "role": "vault-development" }
+  ],
+  "installedOptional": [
+    { "id": "aqu-translay-translator", "version": "0.8.4", "role": "interface-translation" },
+    { "id": "components", "version": "3.1.260325", "role": "reusable-components" }
   ]
 }

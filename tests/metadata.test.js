@@ -31,6 +31,7 @@ test("release runtime assets and canonical source files exist", () => {
   for (const name of [
     "main.js", "manifest.json", "styles.css", "src/main.js", "src/runtime.js", "src/process-manager.js",
     "src/backend-installer.js", "src/backend-release.js", "src/miniforge-release.js",
+    "README.md", "README_EN.md",
   ]) {
     assert.equal(fs.existsSync(path.join(root, name)), true, `${name} should exist`);
   }
@@ -45,11 +46,29 @@ test("one-click installer assets are versioned, checksummed, and documented", ()
   ]) {
     assert.match(asset.sha256, /^[a-f0-9]{64}$/, `${asset.name} needs a fixed SHA-256`);
   }
-  const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+  const readme = fs.readFileSync(path.join(root, "README_EN.md"), "utf8");
   assert.match(readme, /Install backend/);
   assert.match(readme, /Miniforge 26\.3\.2-2/);
   assert.match(readme, /does not modify\s+(?:the )?system PATH/i);
   assert.match(readme, /~\/\.paperbrain\/runtime\/miniforge3/);
+  assert.match(readme, /backend-0\.3\.4/);
+});
+
+test("Chinese and English setup guides are switchable and installation-complete", () => {
+  const chinese = fs.readFileSync(path.join(root, "README.md"), "utf8");
+  const english = fs.readFileSync(path.join(root, "README_EN.md"), "utf8");
+  assert.match(chinese, /\[English\]\(README_EN\.md\)/);
+  assert.match(english, /\[简体中文\]\(README\.md\)/);
+  for (const readme of [chinese, english]) {
+    assert.match(readme, /https:\/\/github\.com\/DannyWANGD\/obsidian-paperbrain/);
+    for (const asset of ["main.js", "manifest.json", "styles.css", "checksums.txt"]) {
+      assert.equal(readme.includes(`\`${asset}\``), true, `${asset} should be explained in both READMEs`);
+    }
+    assert.match(readme, /backend-0\.3\.4/);
+    assert.match(readme, /Miniforge 26\.3\.2-2/);
+    assert.match(readme, /\.paperbrain[\\/]runtime[\\/]miniforge3/);
+    assert.match(readme, /\.paperbrain[\\/]config/);
+  }
 });
 
 test("optional companion plugin snapshot stays versioned and dependency-free", () => {
@@ -57,10 +76,23 @@ test("optional companion plugin snapshot stays versioned and dependency-free", (
   const companions = readJson(path.join("docs", "companion-plugins.json"));
   assert.equal(companions.paperbrainVersion, manifest.version);
   assert.deepEqual(companions.required, []);
-  const ids = companions.testedOptional.map((item) => item.id);
-  assert.equal(new Set(ids).size, ids.length);
-  for (const id of ["obsidian42-brat", "dataview", "obsidian-audio-player", "smart-connections"]) {
-    assert.equal(ids.includes(id), true, `${id} should be documented as optional`);
+  const enabledIds = companions.testedOptional.map((item) => item.id);
+  const installedIds = companions.installedOptional.map((item) => item.id);
+  const expectedEnabledIds = [
+    "obsidian42-brat", "dataview", "obsidian-audio-player", "floating-toc",
+    "highlightr-plugin", "obsidian-style-settings", "immersive-translate",
+    "smart-connections", "copilot", "realclaudian",
+  ];
+  assert.deepEqual(enabledIds, expectedEnabledIds);
+  assert.deepEqual(installedIds, ["aqu-translay-translator", "components"]);
+  const allIds = [...enabledIds, ...installedIds];
+  assert.equal(new Set(allIds).size, allIds.length);
+  const readmes = ["README.md", "README_EN.md", path.join("docs", "COMPANION_PLUGINS.md")]
+    .map((name) => fs.readFileSync(path.join(root, name), "utf8"));
+  for (const id of allIds) {
+    for (const readme of readmes) {
+      assert.equal(readme.includes(`\`${id}\``), true, `${id} should be documented in ${path.basename(readme)}`);
+    }
   }
 });
 
