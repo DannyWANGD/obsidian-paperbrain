@@ -1,0 +1,10 @@
+{
+  "id": "paperbrain",
+  "name": "PaperBrain Console",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "Local control console for the PaperBrain Python research pipeline.",
+  "author": "DannyWANGD",
+  "authorUrl": "https://github.com/DannyWANGD",
+  "isDesktopOnly": true
+}
