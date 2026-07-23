@@ -28,9 +28,28 @@ test("package, manifest, and compatibility versions stay aligned", () => {
 });
 
 test("release runtime assets and canonical source files exist", () => {
-  for (const name of ["main.js", "manifest.json", "styles.css", "src/main.js", "src/runtime.js"]) {
+  for (const name of ["main.js", "manifest.json", "styles.css", "src/main.js", "src/runtime.js", "src/process-manager.js"]) {
     assert.equal(fs.existsSync(path.join(root, name)), true, `${name} should exist`);
   }
+});
+
+test("optional companion plugin snapshot stays versioned and dependency-free", () => {
+  const manifest = readJson("manifest.json");
+  const companions = readJson(path.join("docs", "companion-plugins.json"));
+  assert.equal(companions.paperbrainVersion, manifest.version);
+  assert.deepEqual(companions.required, []);
+  const ids = companions.testedOptional.map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ["obsidian42-brat", "dataview", "obsidian-audio-player", "smart-connections"]) {
+    assert.equal(ids.includes(id), true, `${id} should be documented as optional`);
+  }
+});
+
+test("release workflow publishes the beta assets as a prerelease", () => {
+  const workflow = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8");
+  assert.match(workflow, /gh release create/);
+  assert.match(workflow, /main\.js manifest\.json styles\.css checksums\.txt/);
+  assert.match(workflow, /--prerelease/);
 });
 
 test("generated and local-only files stay outside source commits", () => {

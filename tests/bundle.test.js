@@ -12,6 +12,7 @@ test("built main.js exports an Obsidian plugin class", () => {
     if (request === "obsidian") {
       return {
         ItemView: ObsidianBase,
+        Modal: ObsidianBase,
         Notice: class Notice {},
         Plugin: ObsidianBase,
         PluginSettingTab: ObsidianBase,

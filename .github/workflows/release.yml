@@ -54,3 +54,4 @@ jobs:
           --verify-tag
           --title "PaperBrain Console ${GITHUB_REF_NAME}"
           --generate-notes
+          --prerelease

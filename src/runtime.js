@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 const EXECUTION_MODES = new Set(["auto", "cli", "python-script"]);
 const MIN_BACKEND_VERSION = [0, 3, 1];
 const MAX_BACKEND_VERSION = [0, 4, 0];
@@ -61,6 +61,64 @@ function backendScriptPath(backendPath, pathApi = path) {
   return root ? pathApi.join(root, "script", "paperbrain.py") : "";
 }
 
+function pythonExecutableForEnv(envPath, platform = process.platform, pathApi = path) {
+  const root = textValue(envPath);
+  if (!root) return "";
+  return platform === "win32"
+    ? pathApi.join(root, "python.exe")
+    : pathApi.join(root, "bin", "python");
+}
+
+function parseCondaEnvironmentList(value) {
+  try {
+    const payload = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(payload && payload.envs) ? payload.envs.map(textValue).filter(Boolean) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function detectWdPython(options = {}) {
+  const existsSync = options.existsSync || fs.existsSync;
+  const pathApi = options.pathApi || path;
+  const platform = options.platform || process.platform;
+  const savedPath = textValue(options.savedPath);
+  if (savedPath && pathExists(savedPath, existsSync)) {
+    return { path: savedPath, source: "saved" };
+  }
+  const currentPrefix = textValue((options.env || process.env).CONDA_PREFIX);
+  const currentPython = pythonExecutableForEnv(currentPrefix, platform, pathApi);
+  if (currentPrefix && pathApi.basename(currentPrefix).toLowerCase() === "wd" && pathExists(currentPython, existsSync)) {
+    return { path: currentPython, source: "current-conda" };
+  }
+  const envs = parseCondaEnvironmentList(options.condaJson);
+  const wdEnv = envs.find((entry) => pathApi.basename(entry).toLowerCase() === "wd");
+  const wdPython = pythonExecutableForEnv(wdEnv, platform, pathApi);
+  if (wdEnv && pathExists(wdPython, existsSync)) {
+    return { path: wdPython, source: "conda-list" };
+  }
+  return { path: "", source: "not-found" };
+}
+
+function detectBackendPath(options = {}) {
+  const existsSync = options.existsSync || fs.existsSync;
+  for (const candidate of [options.savedPath, options.vaultPath].map(textValue).filter(Boolean)) {
+    if (pathExists(backendScriptPath(candidate, options.pathApi || path), existsSync)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function runConfirmationRequirements(settings, options = {}) {
+  const command = textValue(options.command);
+  const canCost = ["run", "screen", "deep", "digest", "brief"].includes(command);
+  return {
+    paidDisclosure: canCost && !Boolean(settings.paidRunDisclosureAccepted),
+    forceReset: Boolean(options.force),
+  };
+}
+
 function normalizeRuntimeSettings(raw = {}, options = {}) {
   const existsSync = options.existsSync || fs.existsSync;
   const detectedVaultPath = textValue(options.detectedVaultPath);
@@ -88,6 +146,7 @@ function normalizeRuntimeSettings(raw = {}, options = {}) {
     generatePodcast: Boolean(raw.generatePodcast),
     cancelTimeoutSeconds: Math.max(3, Number(raw.cancelTimeoutSeconds) || 20),
     lastPreset: textValue(raw.lastPreset) || "daily",
+    paidRunDisclosureAccepted: Boolean(raw.paidRunDisclosureAccepted),
   };
 }
 
@@ -430,6 +489,8 @@ module.exports = {
   buildSiblingInvocation,
   buildSpawnOptions,
   defaultPythonCommand,
+  detectBackendPath,
+  detectWdPython,
   detectVaultPath,
   findExecutable,
   isCompatibleBackendVersion,
@@ -438,8 +499,11 @@ module.exports = {
   mergeFailurePayload,
   normalizeRuntimeSettings,
   parsePayload,
+  parseCondaEnvironmentList,
+  pythonExecutableForEnv,
   processOutcome,
   redactDiagnostics,
+  runConfirmationRequirements,
   resolveRuntimePath,
   safeExternalHttpUrl,
   selectExecutionMode,

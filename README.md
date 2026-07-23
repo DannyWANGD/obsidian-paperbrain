@@ -13,6 +13,22 @@ The MIT License in this repository covers only the plugin code. The external
 backend, papers, model services, and generated or downloaded content remain
 subject to their own licenses and terms.
 
+## Quick Start
+
+If PaperBrain and the `wd` Conda environment already work on this computer,
+plugin setup is three steps:
+
+1. In BRAT, choose **Add beta plugin** and enter
+   `https://github.com/DannyWANGD/obsidian-paperbrain`.
+2. Open PaperBrain Console and select **Detect again**. The plugin finds the
+   saved backend/current vault and the existing `wd` Python environment.
+3. Select **Validate setup**, then choose a run mode and select **Run**.
+
+That is the complete normal installation flow. PaperBrain does not require any
+other Obsidian plugin. The companion plugins documented later are optional.
+Only users who do not yet have the external PaperBrain pipeline need the
+one-time backend setup below.
+
 ## Requirements
 
 - Obsidian desktop 1.5.0 or later
@@ -20,10 +36,17 @@ subject to their own licenses and terms.
 - Python 3.9 or later when using a backend checkout
 - An API account and key for the LLM provider selected in the backend
 
-## Install the Plugin
+## Beta Installation Details
 
 Until the plugin is available in the Obsidian Community directory, install a
-GitHub Release manually:
+GitHub Release through BRAT (recommended for the beta):
+
+1. Install and enable BRAT in Obsidian.
+2. Choose **Add beta plugin** and enter
+   `https://github.com/DannyWANGD/obsidian-paperbrain`.
+3. Enable **PaperBrain Console** under Community plugins.
+
+For a manual installation:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the same release.
 2. Place them in `<vault>/.obsidian/plugins/paperbrain/`.
@@ -31,9 +54,11 @@ GitHub Release manually:
 
 Do not mix files from different release versions.
 
-## Install the Backend
+## One-Time Backend Setup
 
-Clone and prepare the backend separately. From its repository root:
+Skip this section when your existing PaperBrain backend already runs in `wd`.
+For a new machine, clone and prepare the backend separately from the plugin.
+From the backend repository root:
 
 ```bash
 conda create -n wd python=3.10 -y
@@ -52,29 +77,34 @@ repository.
 ## Configure PaperBrain Console
 
 Open **Settings -> Community plugins -> PaperBrain Console** and use
-**Validate** after changing runtime settings.
+**Detect again** once, then **Validate setup**. Detection checks only the saved
+backend directory, the active vault, the current Conda environment, and the
+`wd` entry returned by `conda env list --json`. It never scans other drives,
+creates an environment, installs packages, or stores an API key.
 
-- **Execution mode**: `Auto` uses `script/paperbrain.py` when a valid backend
-  checkout is configured, otherwise it invokes the installed `paperbrain` CLI.
-- **CLI executable**: use the absolute `paperbrain` path reported by
-  `where.exe paperbrain` on Windows or `which paperbrain` on macOS/Linux while
-  `wd` is active. This is more reliable because Obsidian does not necessarily
-  inherit the activated Conda environment's `PATH`.
-- **Python executable**: for script mode, use the absolute Python path reported
-  by `where.exe python` or `which python` while `wd` is active.
-- **Backend checkout path**: the folder containing `script/paperbrain.py`.
-- **Backend config file**: optional user-owned YAML file. The plugin passes it
-  through `PAPERBRAIN_CONFIG_PATH`.
-- **Vault path**: detected from the current desktop vault on first start. The
-  plugin passes it through `PAPERBRAIN_VAULT_PATH`, so backend output and the
-  console remain aligned even when the backend and vault are separate.
-- **Default provider**, **Generate podcast by default**, and **Cancel timeout
-  seconds** control the corresponding pipeline defaults.
+- **Backend directory** is the checkout containing `script/paperbrain.py`.
+- **wd Python** is the absolute Python executable in the existing `wd` Conda
+  environment.
+- **Default provider** controls the provider selected for a new run.
+- **Advanced** contains CLI mode, config and vault overrides, podcast default,
+  and the cancellation timeout.
+
+**Validate setup** runs `doctor config`, `doctor env`, and `doctor llm` in that
+order. It never adds `--live`, so validation does not send a model request.
 
 Use the brain-circuit ribbon icon or the **Open console** command. Choose a
 preset and date, run the pipeline, and inspect the timeline and artifacts in
 the same view. The **Validate configuration** command checks local paths before
 a run; `paperbrain doctor` performs deeper backend checks.
+
+## Optional Companion Plugins
+
+PaperBrain Console works independently, but the development vault also tests
+BRAT, Dataview, Audio Player, floating toc, Highlightr, Style Settings,
+Immersive Translate, Smart Connections, Copilot, and Claudian. See
+[Companion Obsidian plugins](docs/COMPANION_PLUGINS.md) for exact plugin IDs,
+tested versions, recommended uses, and privacy or UI cautions. No third-party
+plugin code is bundled or redistributed by PaperBrain.
 
 ## Data, Network, and Cost Disclosures
 
@@ -114,6 +144,7 @@ egress design before PDF and resource-link validation will work.
 
 | Plugin | PaperBrain backend | Obsidian |
 | --- | --- | --- |
+| 0.3.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 | 0.2.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
 New backend or plugin minor versions may change their command or result

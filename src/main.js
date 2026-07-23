@@ -1,29 +1,27 @@
-const { ItemView, Notice, Plugin, PluginSettingTab, Setting, normalizePath, setIcon } = require("obsidian");
+const { ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, normalizePath, setIcon } = require("obsidian");
 const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const {
-  boundedAppend,
   buildInvocation,
-  buildSiblingInvocation,
   buildSpawnOptions,
+  detectBackendPath,
   detectVaultPath,
-  isCurrentProcess,
-  mergeFailurePayload,
+  detectWdPython,
   normalizeRuntimeSettings,
-  parsePayload,
-  processOutcome,
   redactDiagnostics,
+  runConfirmationRequirements,
   safeExternalHttpUrl,
   toVaultRelativePath,
   validateRuntimeSettings,
   yesterday,
 } = require("./runtime");
+const { ProcessManager } = require("./process-manager");
 
 const VIEW_TYPE = "paperbrain-console-view";
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 2,
+  settingsVersion: 3,
   executionMode: "auto",
   cliPath: "",
   pythonPath: "",
@@ -34,6 +32,7 @@ const DEFAULT_SETTINGS = {
   generatePodcast: false,
   cancelTimeoutSeconds: 20,
   lastPreset: "daily",
+  paidRunDisclosureAccepted: false,
 };
 
 const PANELS = [
@@ -139,16 +138,22 @@ module.exports = class PaperBrainPlugin extends Plugin {
       existsSync: fs.existsSync,
     });
     this.views = new Set();
+    this.processManager = new ProcessManager({
+      spawn: childProcess.spawn,
+      inferStage: inferStageFromOutput,
+      onNotice: ({ ok, message }) => new Notice(message, ok ? 5000 : 8000),
+    });
     const firstStart = !stored.settingsVersion;
     const migratedLegacyPath = Boolean(stored.repoPath && !stored.backendPath);
-    if (firstStart || migratedLegacyPath) await this.saveSettings();
+    const migratedSettings = stored.settingsVersion !== DEFAULT_SETTINGS.settingsVersion;
+    if (firstStart || migratedLegacyPath || migratedSettings) await this.saveSettings();
     this.addSettingTab(new PaperBrainSettingTab(this.app, this));
     this.registerView(VIEW_TYPE, (leaf) => {
       const view = new PaperBrainConsoleView(leaf, this);
       this.views.add(view);
       return view;
     });
-    this.addRibbonIcon("brain-circuit", "PaperBrain Console", () => this.activateView());
+    this.addRibbonIcon("brain-circuit", "PaperBrain console", () => this.activateView());
     this.addCommand({
       id: "open-paperbrain-console",
       name: "Open console",
@@ -165,15 +170,16 @@ module.exports = class PaperBrainPlugin extends Plugin {
         const mode = validation.invocation.mode === "cli" ? "CLI lookup from PATH" : "local Python backend";
         new Notice(`PaperBrain setup initialized with the current vault and ${mode}. Review plugin settings before the first run.`, 8000);
       } else {
-        new Notice(`PaperBrain setup requires configuration: ${validation.errors[0]}`, 9000);
+        new Notice("PaperBrain setup is incomplete. Open the console to finish setup.", 8000);
       }
     } else if (!validation.ok) {
-      new Notice(`PaperBrain configuration needs attention: ${validation.errors[0]}`, 8000);
+      new Notice("PaperBrain setup needs attention. Open the console for details.", 8000);
     }
   }
 
   async onunload() {
-    for (const view of this.views || []) view.dispose("plugin unload");
+    if (this.processManager) this.processManager.dispose("plugin unload");
+    for (const view of this.views || []) view.dispose();
     if (this.views) this.views.clear();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }
@@ -200,10 +206,77 @@ module.exports = class PaperBrainPlugin extends Plugin {
         const warning = validation.warnings[0] ? ` ${validation.warnings[0]}` : "";
         new Notice(`PaperBrain configuration is valid.${warning}`, 7000);
       } else {
-        new Notice(`PaperBrain configuration is invalid: ${validation.errors.join(" ")}`, 9000);
+        new Notice("PaperBrain setup needs attention. Open the console for details.", 8000);
       }
     }
     return validation;
+  }
+
+  async detectSetup() {
+    let condaJson = "";
+    try {
+      condaJson = await execFileText(process.env.CONDA_EXE || "conda", ["env", "list", "--json"]);
+    } catch (_) {
+      // A saved or currently active wd environment can still be detected without conda on PATH.
+    }
+    const backendPath = detectBackendPath({
+      savedPath: this.settings.backendPath,
+      vaultPath: this.settings.vaultPath,
+      existsSync: fs.existsSync,
+    });
+    const python = detectWdPython({
+      savedPath: this.settings.pythonPath,
+      env: process.env,
+      condaJson,
+      existsSync: fs.existsSync,
+    });
+    if (backendPath) this.settings.backendPath = backendPath;
+    if (python.path) this.settings.pythonPath = python.path;
+    this.settings.executionMode = backendPath ? "python-script" : this.settings.executionMode;
+    await this.saveSettings();
+    return { backendPath, pythonPath: python.path, pythonSource: python.source };
+  }
+
+  openSettings() {
+    this.app.setting.open();
+    this.app.setting.openTabById(this.manifest.id);
+  }
+
+  async validateSetup() {
+    await this.detectSetup();
+    const validation = this.validateConfiguration(false);
+    if (!validation.ok) {
+      this.processManager.appendLog(`setup validation failed: ${validation.errors.join(" ")}`);
+      new Notice("PaperBrain setup is incomplete. Open the console for details.", 8000);
+      return false;
+    }
+    if (this.processManager.snapshot().running) {
+      new Notice("PaperBrain is already running.");
+      return false;
+    }
+    const completedScopes = [];
+    for (const scope of ["config", "env", "llm"]) {
+      const commandArgs = ["doctor", scope];
+      const invocation = buildInvocation(this.settings, commandArgs, { existsSync: fs.existsSync });
+      const result = this.processManager.start({
+        invocation,
+        commandArgs,
+        spawnOptions: buildSpawnOptions(this.settings, invocation),
+        timeoutMs: Math.max(3, Number(this.settings.cancelTimeoutSeconds || 20)) * 1000,
+        context: { date: yesterday(), provider: this.settings.provider, mode: "doctor", preset: "daily", doctorScope: scope },
+        notify: false,
+      });
+      if (!result.started) return false;
+      const outcome = await result.completion;
+      if (!outcome.ok) {
+        if (completedScopes.length) this.processManager.appendLog(`doctor passed before failure: ${completedScopes.join(", ")}`);
+        return false;
+      }
+      completedScopes.push(scope);
+    }
+    this.processManager.appendLog(`doctor passed: ${completedScopes.join(", ")}; live probes were not requested`);
+    new Notice("PaperBrain setup validation passed.");
+    return true;
   }
 };
 
@@ -211,26 +284,22 @@ class PaperBrainConsoleView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.process = null;
-    this.processToken = 0;
-    this.stopTimer = null;
-    this.activeInvocation = null;
-    this.cancelProcess = null;
-    this.stopping = false;
     this.disposed = false;
-    this.stdout = "";
-    this.stderr = "";
-    this.lastPayload = null;
+    this.processUnsubscribe = null;
+    this.runtime = plugin.processManager.snapshot();
     this.state = null;
+    this.stateFingerprint = "";
+    this.pollInFlight = false;
     this.showAllLogs = false;
     this.activePanel = "run";
     this.pollTimer = null;
-    this.liveStage = "";
-    this.liveMessage = "";
-    this.lastOutputLine = "";
     this.panelScroll = {};
     this.renderedPanel = "";
     this.dateTouched = false;
+    this.runHistory = [];
+    this.briefHistory = [];
+    this.briefCache = null;
+    this.pendingTabFocus = "";
     const defaultDate = yesterday();
     const preset = presetById(plugin.settings.lastPreset || "daily");
     this.form = {
@@ -246,12 +315,21 @@ class PaperBrainConsoleView extends ItemView {
     };
   }
 
+  get process() { return this.runtime.running; }
+  get stopping() { return this.runtime.stopping; }
+  get stdout() { return this.runtime.stdout || ""; }
+  get stderr() { return this.runtime.stderr || ""; }
+  get lastPayload() { return this.runtime.lastPayload; }
+  get liveStage() { return this.runtime.stage || ""; }
+  get liveMessage() { return this.runtime.latestOutput || ""; }
+  get lastOutputLine() { return this.runtime.latestOutput || ""; }
+
   getViewType() {
     return VIEW_TYPE;
   }
 
   getDisplayText() {
-    return "PaperBrain Console";
+    return "PaperBrain console";
   }
 
   getIcon() {
@@ -259,61 +337,82 @@ class PaperBrainConsoleView extends ItemView {
   }
 
   async onOpen() {
-    await this.loadState();
+    this.disposed = false;
+    this.processUnsubscribe = this.plugin.processManager.subscribe((snapshot, event) => {
+      this.runtime = snapshot;
+      this.handleProcessEvent(event);
+    });
+    this.restoreRunContext();
+    await Promise.all([this.loadState({ force: true }), this.loadRunHistory()]);
+    if (this.process) this.startPolling();
     this.render();
   }
 
   async onClose() {
-    this.dispose("view closed");
+    this.dispose();
     this.plugin.views.delete(this);
   }
 
-  dispose(reason) {
+  dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.clearStopTimer();
     this.stopPolling();
-    const active = this.process;
-    const cancel = this.cancelProcess;
-    this.process = null;
-    this.cancelProcess = null;
-    this.processToken += 1;
-    this.activeInvocation = null;
-    if (active) {
-      this.appendLog(`terminating active process: ${reason}`);
-      if (active.stdout) active.stdout.removeAllListeners();
-      if (active.stderr) active.stderr.removeAllListeners();
-      active.removeAllListeners();
-      active.on("error", () => {});
-      try {
-        active.kill();
-      } catch (_) {
-        // The process may have exited between the check and kill call.
-      }
-    }
-    if (cancel) {
-      cancel.removeAllListeners();
-      cancel.on("error", () => {});
-      try {
-        cancel.kill();
-      } catch (_) {
-        // The cancellation helper normally exits before the main process.
-      }
-    }
+    if (this.processUnsubscribe) this.processUnsubscribe();
+    this.processUnsubscribe = null;
   }
 
-  async loadState() {
+  restoreRunContext() {
+    const context = this.runtime.context;
+    if (!context) return;
+    if (context.date) this.form.date = context.date;
+    if (context.provider) this.form.provider = context.provider;
+    if (context.mode) this.form.mode = context.mode;
+    if (context.preset) this.form.preset = context.preset;
+    if (typeof context.generatePodcast === "boolean") this.form.generatePodcast = context.generatePodcast;
+    if (context.arxivUrl) this.form.arxivUrl = context.arxivUrl;
+  }
+
+  handleProcessEvent(event) {
     if (this.disposed) return;
-    const statePath = this.currentStatePath();
-    if (!statePath || !fs.existsSync(statePath)) {
-      this.state = null;
+    if (event === "started") this.startPolling();
+    if (event === "finished") {
+      this.stopPolling();
+      const payload = this.lastPayload;
+      if (payload && payload.date) {
+        this.form.date = payload.date;
+        this.dateTouched = false;
+      }
+      Promise.all([this.loadState({ force: true }), this.loadRunHistory(), this.loadPanelData()]).then(() => this.render());
       return;
     }
+    if (["attach", "started", "stopping", "output", "stage"].includes(event)) this.render();
+  }
+
+  async loadState(options = {}) {
+    if (this.disposed) return;
+    const statePath = this.currentStatePath();
+    if (!statePath) {
+      this.state = null;
+      this.stateFingerprint = "";
+      return true;
+    }
     try {
-      this.state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const stat = await fs.promises.stat(statePath);
+      const fingerprint = `${statePath}:${stat.mtimeMs}:${stat.size}`;
+      if (!options.force && fingerprint === this.stateFingerprint) return false;
+      this.state = JSON.parse(await fs.promises.readFile(statePath, "utf8"));
+      this.stateFingerprint = fingerprint;
+      return true;
     } catch (error) {
+      if (error && error.code === "ENOENT") {
+        const changed = this.state !== null || this.stateFingerprint !== "";
+        this.state = null;
+        this.stateFingerprint = "";
+        return changed;
+      }
       this.state = null;
       this.appendLog(`state read failed: ${error.message}`);
+      return true;
     }
   }
 
@@ -338,6 +437,7 @@ class PaperBrainConsoleView extends ItemView {
   render() {
     if (this.disposed) return;
     this.capturePaneScroll();
+    const focus = this.captureInputFocus();
     const root = this.containerEl.children[1];
     root.empty();
     root.addClass("paperbrain-console");
@@ -356,7 +456,41 @@ class PaperBrainConsoleView extends ItemView {
       this.renderDetails(pane);
     }
     this.restorePaneScroll(pane, this.activePanel);
+    this.restoreInputFocus(focus);
+    this.restoreTabFocus();
     this.renderedPanel = this.activePanel;
+  }
+
+  captureInputFocus() {
+    const active = document.activeElement;
+    if (!active || !this.containerEl.contains(active) || !active.dataset.paperbrainField) return null;
+    return {
+      key: active.dataset.paperbrainField,
+      start: typeof active.selectionStart === "number" ? active.selectionStart : null,
+      end: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+    };
+  }
+
+  restoreInputFocus(focus) {
+    if (!focus) return;
+    requestAnimationFrame(() => {
+      const input = this.containerEl.querySelector(`[data-paperbrain-field="${focus.key}"]`);
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      if (focus.start !== null && typeof input.setSelectionRange === "function") {
+        input.setSelectionRange(focus.start, focus.end);
+      }
+    });
+  }
+
+  restoreTabFocus() {
+    if (!this.pendingTabFocus) return;
+    const panel = this.pendingTabFocus;
+    this.pendingTabFocus = "";
+    requestAnimationFrame(() => {
+      const tab = this.containerEl.querySelector(`[data-paperbrain-panel="${panel}"]`);
+      if (tab) tab.focus({ preventScroll: true });
+    });
   }
 
   capturePaneScroll() {
@@ -374,15 +508,54 @@ class PaperBrainConsoleView extends ItemView {
     });
   }
 
+  async loadPanelData(panel = this.activePanel) {
+    if (panel === "run") await this.loadRunHistory();
+    if (panel === "briefs") await this.loadBriefData();
+  }
+
+  async loadBriefData() {
+    const briefDate = this.form.briefDate || this.form.date || yesterday();
+    const period = briefPeriod(this.form.briefMode || "week", briefDate);
+    const [existing, summary, history] = await Promise.all([
+      this.findBrief(period.label),
+      this.readDailyDigestSummary(period.start, period.end),
+      this.readBriefHistory(),
+    ]);
+    this.briefHistory = history;
+    this.briefCache = { key: `${period.type}:${briefDate}`, existing, summary };
+  }
+
   renderPanelTabs(root) {
-    const tabs = root.createDiv({ cls: "paperbrain-tabs" });
-    PANELS.forEach((panel) => {
-      const button = tabs.createEl("button", { text: panel.label });
+    const tabs = root.createDiv({ cls: "paperbrain-tabs", attr: { role: "tablist", "aria-label": "PaperBrain views" } });
+    const buttons = [];
+    PANELS.forEach((panel, index) => {
+      const button = tabs.createEl("button", {
+        text: panel.label,
+        attr: {
+          role: "tab",
+          type: "button",
+          "aria-selected": String(this.activePanel === panel.id),
+          tabindex: this.activePanel === panel.id ? "0" : "-1",
+        },
+      });
+      button.dataset.paperbrainPanel = panel.id;
+      buttons.push(button);
       if (this.activePanel === panel.id) button.addClass("is-active");
       button.addEventListener("click", async () => {
         this.activePanel = panel.id;
-        await this.loadState();
+        await Promise.all([this.loadState(), this.loadPanelData(panel.id)]);
         this.render();
+      });
+      button.addEventListener("keydown", (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? buttons.length - 1
+            : (index + (event.key === "ArrowRight" ? 1 : -1) + PANELS.length) % PANELS.length;
+        this.pendingTabFocus = PANELS[nextIndex].id;
+        buttons[nextIndex].click();
       });
     });
   }
@@ -390,7 +563,7 @@ class PaperBrainConsoleView extends ItemView {
   renderTopbar(root) {
     const bar = root.createDiv({ cls: "paperbrain-topbar" });
     const title = bar.createDiv({ cls: "paperbrain-title" });
-    title.createEl("strong", { text: "PaperBrain Console" });
+    title.createEl("strong", { text: "PaperBrain console" });
     const runtime = this.plugin.validateConfiguration(false).invocation;
     title.createEl("span", {
       text: `${this.plugin.settings.vaultPath} / ${runtime.mode === "cli" ? "CLI" : "Python backend"}`,
@@ -400,6 +573,11 @@ class PaperBrainConsoleView extends ItemView {
   }
 
   renderControls(parent) {
+    const validation = this.plugin.validateConfiguration(false);
+    if (!validation.ok && !this.process) {
+      this.renderSetupGuide(parent, validation);
+      return;
+    }
     const section = parent.createDiv({ cls: "paperbrain-section" });
     section.createEl("h3", { text: "Run" });
     this.renderPresetSelect(section);
@@ -475,10 +653,61 @@ class PaperBrainConsoleView extends ItemView {
     openActions.createEl("button", { text: "Index" }).addEventListener("click", () => this.runIndex());
   }
 
+  renderSetupGuide(parent, validation) {
+    const section = parent.createDiv({ cls: "paperbrain-section paperbrain-setup" });
+    section.createEl("h3", { text: "Finish setup" });
+    section.createEl("p", { cls: "paperbrain-muted", text: "PaperBrain checks existing local tools only. It will not create environments, install packages, or store API keys." });
+    const backendReady = Boolean(detectBackendPath({
+      savedPath: this.plugin.settings.backendPath,
+      vaultPath: this.plugin.settings.vaultPath,
+      existsSync: fs.existsSync,
+    }));
+    const pythonReady = Boolean(detectWdPython({
+      savedPath: this.plugin.settings.pythonPath,
+      env: process.env,
+      existsSync: fs.existsSync,
+    }).path);
+    [
+      ["1", "Backend", backendReady ? "Found script/paperbrain.py." : "Choose a backend checkout containing script/paperbrain.py."],
+      ["2", "wd Python", pythonReady ? "The wd Python executable is ready." : "Activate or create the wd Conda environment outside Obsidian, then detect again."],
+      ["3", "Provider diagnostics", "Validate setup runs doctor config, env, and llm locally without --live."],
+    ].forEach(([numberText, title, detail]) => {
+      const item = section.createDiv({ cls: "paperbrain-setup-step" });
+      item.createEl("strong", { text: numberText, attr: { "aria-hidden": "true" } });
+      const copy = item.createDiv();
+      copy.createEl("b", { text: title });
+      copy.createEl("span", { text: detail });
+    });
+    const errors = section.createDiv({ cls: "paperbrain-setup-errors", attr: { role: "status" } });
+    validation.errors.forEach((error) => errors.createEl("div", { text: error }));
+    const actions = section.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
+    actions.createEl("button", { text: "Detect again" }).addEventListener("click", async () => {
+      const result = await this.plugin.detectSetup();
+      this.form.provider = this.plugin.settings.provider;
+      this.appendLog(`setup detection: backend=${result.backendPath ? "found" : "missing"}, wd=${result.pythonPath ? result.pythonSource : "missing"}`);
+      this.render();
+    });
+    actions.createEl("button", { text: "Validate setup" }).addEventListener("click", async () => {
+      await this.plugin.detectSetup();
+      const current = this.plugin.validateConfiguration(false);
+      if (!current.ok) {
+        this.appendLog(`setup validation failed: ${current.errors.join(" ")}`);
+        new Notice("PaperBrain setup is incomplete. See console details.", 7000);
+        this.render();
+        return;
+      }
+      await this.runDoctorSequence();
+    });
+    const recovery = section.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
+    recovery.createEl("button", { text: "Open settings" }).addEventListener("click", () => this.plugin.openSettings());
+    recovery.createEl("button", { text: "Copy redacted diagnostics" }).addEventListener("click", () => this.copyDiagnostics());
+  }
+
   renderPresetSelect(parent) {
     const field = parent.createDiv({ cls: "paperbrain-field" });
     field.createEl("label", { text: "Run mode" });
     const select = field.createEl("select");
+    select.dataset.paperbrainField = "preset";
     PRESETS.forEach((preset) => {
       const item = select.createEl("option", { text: preset.label, value: preset.id });
       item.selected = preset.id === this.form.preset;
@@ -492,11 +721,11 @@ class PaperBrainConsoleView extends ItemView {
     this.renderTimeline(timeline);
 
     const status = parent.createDiv({ cls: "paperbrain-section" });
-    status.createEl("h3", { text: "Live Status" });
+    status.createEl("h3", { text: "Live status" });
     this.renderLiveStatus(status);
 
     const papers = parent.createDiv({ cls: "paperbrain-section" });
-    papers.createEl("h3", { text: "Paper Queue" });
+    papers.createEl("h3", { text: "Paper queue" });
     this.renderPaperTable(papers);
   }
 
@@ -506,11 +735,11 @@ class PaperBrainConsoleView extends ItemView {
     this.renderArtifacts(artifacts);
 
     const retry = parent.createDiv({ cls: "paperbrain-section" });
-    retry.createEl("h3", { text: "Retry Panel" });
+    retry.createEl("h3", { text: "Retry panel" });
     this.renderRetryPanel(retry);
 
     const review = parent.createDiv({ cls: "paperbrain-section" });
-    review.createEl("h3", { text: "Review Queue" });
+    review.createEl("h3", { text: "Review queue" });
     this.renderReviewQueue(review);
 
     const diagnostics = parent.createDiv({ cls: "paperbrain-section" });
@@ -699,6 +928,32 @@ class PaperBrainConsoleView extends ItemView {
       }
       actions.createEl("button", { text: "Retry" }).addEventListener("click", () => this.retryPaperMode(paper, "run"));
     });
+    this.renderPaperCards(parent, papers);
+  }
+
+  renderPaperCards(parent, papers) {
+    const cards = parent.createDiv({ cls: "paperbrain-paper-cards" });
+    papers.forEach((paper) => {
+      const card = cards.createDiv({ cls: "paperbrain-paper-card" });
+      card.createEl("strong", { text: paper.title || paper.short_title || "Untitled" });
+      const facts = card.createDiv({ cls: "paperbrain-paper-facts" });
+      [
+        ["Score", formatQueueScore(paper)],
+        ["Stage", paper.screening_stage || paperStageHint(paper)],
+        ["Digest", paper.in_daily_digest ? "yes" : "no"],
+        ["Deep", paper.selected_for_deep_analysis ? "yes" : "no"],
+      ].forEach(([label, value]) => {
+        const fact = facts.createDiv();
+        fact.createEl("span", { text: label });
+        fact.createEl("b", { text: value });
+      });
+      const actions = card.createDiv({ cls: "paperbrain-inline-actions" });
+      const notePath = this.existingLocalPath(paper.note_path);
+      const pdfPath = this.existingLocalPath(paper.pdf_path || paper.local_pdf_path);
+      if (notePath) actions.createEl("button", { text: "Note" }).addEventListener("click", () => this.openPath(notePath));
+      if (pdfPath) actions.createEl("button", { text: "PDF" }).addEventListener("click", () => this.openPath(pdfPath));
+      actions.createEl("button", { text: "Retry" }).addEventListener("click", () => this.retryPaperMode(paper, "run"));
+    });
   }
 
   renderQueueEmpty(parent) {
@@ -792,8 +1047,8 @@ class PaperBrainConsoleView extends ItemView {
       return;
     }
     const globalActions = parent.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
-    globalActions.createEl("button", { text: "Rebuild Index" }).addEventListener("click", () => this.runIndex());
-    globalActions.createEl("button", { text: "Refresh State" }).addEventListener("click", async () => {
+    globalActions.createEl("button", { text: "Rebuild index" }).addEventListener("click", () => this.runIndex());
+    globalActions.createEl("button", { text: "Refresh state" }).addEventListener("click", async () => {
       await this.loadState();
       this.render();
     });
@@ -830,16 +1085,20 @@ class PaperBrainConsoleView extends ItemView {
     const briefDate = this.form.briefDate || this.form.date || yesterday();
     this.form.briefDate = briefDate;
     const period = briefPeriod(this.form.briefMode || "week", briefDate);
-    const existing = this.findBrief(period.label);
+    const cacheKey = `${period.type}:${briefDate}`;
+    const cached = this.briefCache && this.briefCache.key === cacheKey ? this.briefCache : null;
+    const existing = cached ? cached.existing : "";
 
     const controls = parent.createDiv({ cls: "paperbrain-section" });
     controls.createEl("h3", { text: "Briefs" });
-    this.select(controls, "Period", "briefMode", this.form.briefMode || "week", ["week", "month"], (value) => {
+    this.select(controls, "Period", "briefMode", this.form.briefMode || "week", ["week", "month"], async (value) => {
       this.form.briefMode = value;
+      await this.loadBriefData();
       this.render();
     });
-    this.field(controls, "Date", "briefDate", briefDate, (value) => {
+    this.field(controls, "Date", "briefDate", briefDate, async (value) => {
       this.form.briefDate = value || yesterday();
+      await this.loadBriefData();
       this.render();
     }, { type: "date", cls: "paperbrain-date-input", fieldCls: "paperbrain-date-field" });
     const actions = controls.createDiv({ cls: "paperbrain-actions" });
@@ -848,7 +1107,7 @@ class PaperBrainConsoleView extends ItemView {
     openButton.disabled = !existing;
     openButton.addEventListener("click", () => existing && this.openPath(existing));
 
-    const summary = this.readDailyDigestSummary(period.start, period.end);
+    const summary = cached ? cached.summary : { daysFound: 0, highCount: 0, entries: [] };
     const metricsSection = parent.createDiv({ cls: "paperbrain-section" });
     metricsSection.createEl("h3", { text: period.label, cls: "paperbrain-date-text" });
     const metrics = metricsSection.createDiv({ cls: "paperbrain-status-metrics paperbrain-brief-metrics" });
@@ -864,7 +1123,7 @@ class PaperBrainConsoleView extends ItemView {
     });
 
     const topSection = parent.createDiv({ cls: "paperbrain-section" });
-    topSection.createEl("h3", { text: "Top Papers" });
+    topSection.createEl("h3", { text: "Top papers" });
     const topEntries = summary.entries.slice(0, 8);
     if (!topEntries.length) {
       topSection.createDiv({ cls: "paperbrain-empty", text: "No daily digest entries found." });
@@ -892,8 +1151,8 @@ class PaperBrainConsoleView extends ItemView {
 
   renderBriefHistory(parent) {
     const section = parent.createDiv({ cls: "paperbrain-section" });
-    section.createEl("h3", { text: "Research Briefs" });
-    const history = this.readBriefHistory().slice(0, 10);
+    section.createEl("h3", { text: "Research briefs" });
+    const history = this.briefHistory.slice(0, 10);
     if (!history.length) {
       section.createDiv({ cls: "paperbrain-empty", text: "No research briefs found." });
       return;
@@ -913,55 +1172,58 @@ class PaperBrainConsoleView extends ItemView {
     this.spawnPaperBrain(args);
   }
 
-  findBrief(label) {
+  async findBrief(label) {
     const root = this.vaultPath("Research_Briefs");
     if (!root) return "";
     const direct = path.join(root, `${label}-ResearchBrief.md`);
-    if (fs.existsSync(direct)) return direct;
-    if (!fs.existsSync(root)) return "";
     try {
-      const match = fs.readdirSync(root).find((name) => name.endsWith("-ResearchBrief.md") && name.includes(label));
+      await fs.promises.access(direct);
+      return direct;
+    } catch (_) {
+      // Fall back to older brief filenames in the configured briefs directory.
+    }
+    try {
+      const match = (await fs.promises.readdir(root)).find((name) => name.endsWith("-ResearchBrief.md") && name.includes(label));
       return match ? path.join(root, match) : "";
     } catch (error) {
-      this.appendLog(`brief lookup failed: ${error.message}`);
+      if (error.code !== "ENOENT") this.appendLog(`brief lookup failed: ${error.message}`);
       return "";
     }
   }
 
-  readBriefHistory() {
+  async readBriefHistory() {
     const root = this.vaultPath("Research_Briefs");
-    if (!fs.existsSync(root)) return [];
     try {
-      return fs.readdirSync(root)
-        .filter((name) => name.endsWith("-ResearchBrief.md"))
-        .map((name) => {
+      const names = (await fs.promises.readdir(root)).filter((name) => name.endsWith("-ResearchBrief.md"));
+      const items = await Promise.all(names.map(async (name) => {
           const fullPath = path.join(root, name);
-          const stat = fs.statSync(fullPath);
+          const stat = await fs.promises.stat(fullPath);
           return {
             path: fullPath,
             label: name.replace(/-ResearchBrief\.md$/, ""),
             modified: new Date(stat.mtimeMs).toISOString().slice(0, 16).replace("T", " "),
             sort: stat.mtimeMs,
           };
-        })
-        .sort((a, b) => b.sort - a.sort);
+        }));
+      return items.sort((a, b) => b.sort - a.sort);
     } catch (error) {
-      this.appendLog(`brief history read failed: ${error.message}`);
+      if (error.code !== "ENOENT") this.appendLog(`brief history read failed: ${error.message}`);
       return [];
     }
   }
 
-  readDailyDigestSummary(startDate, endDate) {
+  async readDailyDigestSummary(startDate, endDate) {
     const dailyRoot = this.vaultPath("Daily_Papers");
     if (!dailyRoot) return { daysFound: 0, highCount: 0, entries: [] };
     const entries = [];
     let daysFound = 0;
-    dateRange(startDate, endDate).forEach((dateKey) => {
+    for (const dateKey of dateRange(startDate, endDate)) {
       const digestPath = path.join(dailyRoot, `${dateKey}-PaperDigest.md`);
-      if (!fs.existsSync(digestPath)) return;
+      const digestEntries = await this.readDailyDigestEntries(digestPath, dateKey);
+      if (digestEntries === null) continue;
       daysFound += 1;
-      entries.push(...this.readDailyDigestEntries(digestPath, dateKey));
-    });
+      entries.push(...digestEntries);
+    }
     entries.sort((a, b) => number(b.score) - number(a.score));
     return {
       daysFound,
@@ -970,9 +1232,9 @@ class PaperBrainConsoleView extends ItemView {
     };
   }
 
-  readDailyDigestEntries(digestPath, dateKey) {
+  async readDailyDigestEntries(digestPath, dateKey) {
     try {
-      const raw = fs.readFileSync(digestPath, "utf8");
+      const raw = await fs.promises.readFile(digestPath, "utf8");
       return raw.split(/\n(?=###\s+)/)
         .map((chunk) => {
           const match = chunk.match(/^###\s+(.+?)\s+\(Score:\s*([0-9]+(?:\.[0-9]+)?)\/10\)/m);
@@ -988,8 +1250,9 @@ class PaperBrainConsoleView extends ItemView {
         })
         .filter(Boolean);
     } catch (error) {
+      if (error.code === "ENOENT") return null;
       this.appendLog(`daily digest read failed: ${error.message}`);
-      return [];
+      return null;
     }
   }
 
@@ -1000,7 +1263,9 @@ class PaperBrainConsoleView extends ItemView {
     const input = field.createEl("input");
     input.type = options.type || "text";
     if (options.cls) input.addClass(options.cls);
+    input.dataset.paperbrainField = key;
     input.value = value || "";
+    input.addEventListener("input", () => { this.form[key] = input.value; });
     input.addEventListener("change", () => onChange(input.value));
   }
 
@@ -1008,8 +1273,9 @@ class PaperBrainConsoleView extends ItemView {
     const field = parent.createDiv({ cls: "paperbrain-field" });
     field.createEl("label", { text: label });
     const select = field.createEl("select");
+    select.dataset.paperbrainField = key;
     options.forEach((option) => {
-      const item = select.createEl("option", { text: option, value: option });
+      const item = select.createEl("option", { text: optionLabel(option), value: option });
       item.selected = option === value;
     });
     select.addEventListener("change", () => onChange(select.value));
@@ -1054,8 +1320,8 @@ class PaperBrainConsoleView extends ItemView {
 
   renderRunHistory(parent) {
     const section = parent.createDiv({ cls: "paperbrain-section" });
-    section.createEl("h3", { text: "Run History" });
-    const history = this.readRunHistory().slice(0, 12);
+    section.createEl("h3", { text: "Run history" });
+    const history = this.runHistory.slice(0, 12);
     if (!history.length) {
       section.createDiv({ cls: "paperbrain-empty", text: "No historical runs found." });
       return;
@@ -1082,32 +1348,34 @@ class PaperBrainConsoleView extends ItemView {
     });
   }
 
-  readRunHistory() {
+  async loadRunHistory() {
+    this.runHistory = await this.readRunHistory();
+  }
+
+  async readRunHistory() {
     const root = this.vaultPath("Run_Records");
     const items = [];
-    if (!fs.existsSync(root)) return items;
     try {
-      fs.readdirSync(root, { withFileTypes: true }).forEach((entry) => {
+      const entries = await fs.promises.readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
         if (entry.isDirectory()) {
           const statePath = path.join(root, entry.name, "state.json");
-          if (fs.existsSync(statePath)) {
-            const item = this.readStateSummary(statePath);
-            if (item) items.push(item);
-          }
+          const item = await this.readStateSummary(statePath);
+          if (item) items.push(item);
         } else if (entry.isFile() && entry.name.endsWith("-run-state.json")) {
-          const item = this.readStateSummary(path.join(root, entry.name));
+          const item = await this.readStateSummary(path.join(root, entry.name));
           if (item) items.push(item);
         }
-      });
+      }
     } catch (error) {
-      this.appendLog(`run history read failed: ${error.message}`);
+      if (error.code !== "ENOENT") this.appendLog(`run history read failed: ${error.message}`);
     }
     return items.sort((a, b) => textValue(b.updated_at).localeCompare(textValue(a.updated_at)));
   }
 
-  readStateSummary(statePath) {
+  async readStateSummary(statePath) {
     try {
-      const data = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const data = JSON.parse(await fs.promises.readFile(statePath, "utf8"));
       return {
         run_id: data.run_id || path.basename(path.dirname(statePath)),
         date: data.date || "",
@@ -1151,12 +1419,12 @@ class PaperBrainConsoleView extends ItemView {
     this.loadState().then(() => this.render());
   }
 
-  runSelected() {
+  async runSelected() {
     const mode = this.form.mode;
     const args = [mode];
     if (mode === "index") {
       this.form.forceRun = false;
-      this.spawnPaperBrain(args);
+      await this.spawnPaperBrain(args);
       return;
     }
     const arxivUrl = this.form.arxivUrl.trim();
@@ -1170,12 +1438,13 @@ class PaperBrainConsoleView extends ItemView {
     if (this.form.forceRun && ["run", "fetch", "screen", "deep"].includes(mode)) {
       args.push("--force");
     }
+    const force = this.form.forceRun;
     this.form.forceRun = false;
-    this.spawnPaperBrain(args);
+    await this.spawnPaperBrain(args, { force });
   }
 
-  runDoctor() {
-    this.spawnPaperBrain(["doctor"]);
+  async runDoctor() {
+    await this.runDoctorSequence();
   }
 
   runIndex() {
@@ -1184,201 +1453,93 @@ class PaperBrainConsoleView extends ItemView {
   }
 
   stopRun() {
-    if (!this.process || this.stopping) return;
-    const activeProcess = this.process;
-    const activeToken = this.processToken;
-    const activeInvocation = this.activeInvocation;
-    this.stopping = true;
-    this.render();
-    if (activeInvocation) {
-      const cancelInvocation = buildSiblingInvocation(activeInvocation, ["cancel", "--reason", "plugin_stop"]);
-      try {
-        const cancel = childProcess.spawn(cancelInvocation.executable, cancelInvocation.args, {
-          ...buildSpawnOptions(this.plugin.settings, cancelInvocation),
-        });
-        this.cancelProcess = cancel;
-        let cancelFailed = false;
-        cancel.once("error", (error) => {
-          if (this.cancelProcess === cancel) this.cancelProcess = null;
-          cancelFailed = true;
-          this.appendLog(`cancel request failed: ${error.message}`);
-          new Notice(`PaperBrain cancellation request failed: ${error.message}`, 8000);
-          this.render();
-        });
-        cancel.once("close", (code) => {
-          if (this.cancelProcess === cancel) this.cancelProcess = null;
-          if (cancelFailed) return;
-          if (code === 0) {
-            new Notice("PaperBrain cancellation requested.");
-          } else {
-            this.appendLog(`cancel command exited with code ${code}`);
-            new Notice(`PaperBrain cancellation command exited with code ${code}.`, 8000);
-            this.render();
-          }
-        });
-      } catch (error) {
-        this.appendLog(`cancel request failed: ${error.message}`);
-        new Notice(`PaperBrain cancellation request failed: ${error.message}`, 8000);
-      }
-    }
-    this.clearStopTimer();
-    const timeout = Math.max(3, Number(this.plugin.settings.cancelTimeoutSeconds || 20)) * 1000;
-    this.stopTimer = window.setTimeout(() => {
-      this.stopTimer = null;
-      if (isCurrentProcess(this.process, this.processToken, activeProcess, activeToken)) {
-        this.appendLog("hard stop after cancel timeout");
-        try {
-          activeProcess.kill();
-          new Notice("PaperBrain process was terminated after the cancellation timeout.");
-        } catch (error) {
-          this.appendLog(`hard stop failed: ${error.message}`);
-          new Notice(`PaperBrain hard stop failed: ${error.message}`, 8000);
-        }
-        this.render();
-      }
-    }, timeout);
+    this.plugin.processManager.requestStop();
   }
 
-  clearStopTimer() {
-    if (this.stopTimer) {
-      window.clearTimeout(this.stopTimer);
-      this.stopTimer = null;
-    }
-  }
-
-  spawnPaperBrain(commandArgs) {
+  async spawnPaperBrain(commandArgs, options = {}) {
     if (this.disposed) return;
     if (this.process) {
       new Notice("PaperBrain is already running.");
-      return;
+      return null;
     }
     const validation = this.plugin.validateConfiguration(false);
     if (!validation.ok) {
-      new Notice(`PaperBrain configuration is invalid: ${validation.errors.join(" ")}`, 9000);
-      return;
+      this.activePanel = "run";
+      this.appendLog(`configuration invalid: ${validation.errors.join(" ")}`);
+      new Notice("PaperBrain setup needs attention. Open the console for details.", 8000);
+      this.render();
+      return null;
+    }
+    const requirements = runConfirmationRequirements(this.plugin.settings, {
+      command: commandArgs[0],
+      force: options.force || commandArgs.includes("--force"),
+    });
+    if (!options.skipConfirmation && (requirements.paidDisclosure || requirements.forceReset)) {
+      const accepted = await confirmRun(this.app, {
+        provider: this.form.provider,
+        mode: commandArgs[0],
+        podcast: this.form.generatePodcast && !commandArgs.includes("--no-podcast"),
+        paidDisclosure: requirements.paidDisclosure,
+        forceReset: requirements.forceReset,
+      });
+      if (!accepted) return null;
+      if (requirements.paidDisclosure) {
+        this.plugin.settings.paidRunDisclosureAccepted = true;
+        await this.plugin.saveSettings();
+      }
     }
     const invocation = buildInvocation(this.plugin.settings, commandArgs, { existsSync: fs.existsSync });
-    this.stdout = "";
-    this.stderr = "";
-    this.lastPayload = null;
-    this.liveStage = "";
-    this.liveMessage = "";
-    this.lastOutputLine = "";
-    this.stopping = false;
-    this.clearStopTimer();
-    const token = this.processToken + 1;
-    this.processToken = token;
-    let process;
-    try {
-      process = childProcess.spawn(invocation.executable, invocation.args, {
-        ...buildSpawnOptions(this.plugin.settings, invocation),
-      });
-    } catch (error) {
-      const outcome = processOutcome({ error, payload: null, stderr: "" });
-      this.lastPayload = mergeFailurePayload(null, commandArgs[0], outcome, null, null);
-      this.appendLog(`spawn failed: ${error.message}`);
-      new Notice(outcome.message, 9000);
-      this.render();
-      return;
-    }
-    this.process = process;
-    this.activeInvocation = invocation;
-    this.startPolling();
-    this.render();
-    process.stdout.on("data", (data) => {
-      const text = data.toString();
-      this.stdout = boundedAppend(this.stdout, text);
-      this.updateLiveStageFromOutput(text);
-      this.render();
+    const result = this.plugin.processManager.start({
+      invocation,
+      commandArgs,
+      spawnOptions: buildSpawnOptions(this.plugin.settings, invocation),
+      timeoutMs: Math.max(3, Number(this.plugin.settings.cancelTimeoutSeconds || 20)) * 1000,
+      context: {
+        date: this.form.date,
+        provider: this.form.provider,
+        mode: this.form.mode,
+        preset: this.form.preset,
+        arxivUrl: this.form.arxivUrl,
+        generatePodcast: this.form.generatePodcast,
+      },
     });
-    process.stderr.on("data", (data) => {
-      const text = data.toString();
-      this.stderr = boundedAppend(this.stderr, text);
-      this.updateLiveStageFromOutput(text);
-      this.render();
-    });
-    let settled = false;
-    const finalize = async ({ code = null, signal = null, error = null }) => {
-      if (settled) return;
-      settled = true;
-      const ownsSlot = isCurrentProcess(this.process, this.processToken, process, token);
-      const payload = parsePayload(this.stdout);
-      const outcome = processOutcome({
-        code,
-        signal,
-        error,
-        payload,
-        stderr: this.stderr,
-        expectedCommand: commandArgs[0],
-      });
-      if (!ownsSlot) return;
-      this.clearStopTimer();
-      this.lastPayload = outcome.ok
-        ? payload
-        : mergeFailurePayload(payload, commandArgs[0], outcome, code, signal);
-      if (outcome.ok) {
-        new Notice(outcome.message);
-      } else {
-        this.appendLog(`${outcome.reason}: ${outcome.message}`);
-        new Notice(outcome.message, 9000);
-      }
-      if (payload && payload.date) {
-        this.form.date = payload.date;
-        this.dateTouched = false;
-      }
-      this.process = null;
-      this.activeInvocation = null;
-      this.stopping = false;
-      this.stopPolling();
-      this.liveStage = "";
-      if (!this.disposed) {
-        await this.loadState();
-        this.render();
-      }
-    };
-    process.once("error", (error) => finalize({ error }));
-    process.once("close", (code, signal) => finalize({ code, signal }));
+    if (!result.started && result.reason === "already-running") new Notice("PaperBrain is already running.");
+    return result.completion;
+  }
+
+  async runDoctorSequence() {
+    return this.plugin.validateSetup();
   }
 
   startPolling() {
     this.stopPolling();
     if (this.disposed) return;
-    this.pollTimer = window.setInterval(async () => {
+    const poll = async () => {
       if (this.disposed || !this.process) {
         this.stopPolling();
         return;
       }
-      await this.loadState();
-      if (this.state && this.state.stage && this.state.stage !== "initialized") {
-        this.advanceLiveStage(this.state.stage);
+      if (!this.pollInFlight) {
+        this.pollInFlight = true;
+        try {
+          const changed = await this.loadState();
+          if (this.state && this.state.stage && this.state.stage !== "initialized") {
+            this.plugin.processManager.setStage(this.state.stage);
+          }
+          if (changed) this.render();
+        } finally {
+          this.pollInFlight = false;
+        }
       }
-      this.render();
-    }, 2000);
+      if (!this.disposed && this.process) this.pollTimer = window.setTimeout(poll, 2000);
+    };
+    this.pollTimer = window.setTimeout(poll, 2000);
   }
 
   stopPolling() {
     if (this.pollTimer) {
-      window.clearInterval(this.pollTimer);
+      window.clearTimeout(this.pollTimer);
       this.pollTimer = null;
-    }
-  }
-
-  updateLiveStageFromOutput(text) {
-    const line = lastNonEmptyLine(text);
-    if (line) {
-      this.liveMessage = line;
-      this.lastOutputLine = line;
-    }
-    const stage = inferStageFromOutput(text);
-    if (stage) this.advanceLiveStage(stage);
-  }
-
-  advanceLiveStage(stage) {
-    const next = normalizeStageForUi(stage);
-    if (!next || next === "initialized" || next === "idle") return;
-    const current = normalizeStageForUi(this.liveStage);
-    if (!current || isTerminalStage(next) || stageIndex(next) >= stageIndex(current)) {
-      this.liveStage = next;
     }
   }
 
@@ -1455,7 +1616,7 @@ class PaperBrainConsoleView extends ItemView {
   }
 
   appendLog(line) {
-    this.stderr = `${this.stderr}\n${line}`.trim();
+    this.plugin.processManager.appendLog(line);
   }
 }
 
@@ -1475,11 +1636,53 @@ class PaperBrainSettingTab extends PluginSettingTab {
         ? `${validation.invocation.mode === "cli" ? "CLI" : "Python script"} mode is ready.${validation.warnings[0] ? ` ${validation.warnings[0]}` : ""}`
         : validation.errors.join(" "))
       .addButton((button) => button
-        .setButtonText("Validate")
-        .onClick(() => this.plugin.validateConfiguration(true)));
+        .setButtonText("Detect again")
+        .onClick(async () => {
+          await this.plugin.detectSetup();
+          this.display();
+        }))
+      .addButton((button) => button
+        .setCta()
+        .setButtonText("Validate setup")
+        .onClick(async () => {
+          await this.plugin.activateView();
+          await this.plugin.validateSetup();
+          this.display();
+        }));
     new Setting(containerEl)
+      .setName("Backend directory")
+      .setDesc("Folder containing script/paperbrain.py. Detection checks this folder and the current vault only.")
+      .addText((input) => input
+        .setValue(this.plugin.settings.backendPath)
+        .onChange(async (value) => {
+          this.plugin.settings.backendPath = value.trim();
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
+      .setName("wd Python")
+      .setDesc("Python executable from the existing wd Conda environment.")
+      .addText((input) => input
+        .setPlaceholder(process.platform === "win32" ? "...\\envs\\wd\\python.exe" : ".../envs/wd/bin/python")
+        .setValue(this.plugin.settings.pythonPath)
+        .onChange(async (value) => {
+          this.plugin.settings.pythonPath = value.trim();
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
+      .setName("Default provider")
+      .addDropdown((dropdown) => dropdown
+        .addOption("openrouter", "OpenRouter")
+        .addOption("doubao", "Doubao")
+        .setValue(this.plugin.settings.provider)
+        .onChange(async (value) => {
+          this.plugin.settings.provider = value;
+          await this.plugin.saveSettings();
+        }));
+    const advanced = containerEl.createEl("details", { cls: "paperbrain-settings-advanced" });
+    advanced.createEl("summary", { text: "Advanced" });
+    new Setting(advanced)
       .setName("Execution mode")
-      .setDesc("Auto uses a backend script when found, otherwise the installed paperbrain CLI.")
+      .setDesc("Auto uses a backend script when found, otherwise the installed PaperBrain CLI.")
       .addDropdown((dropdown) => dropdown
         .addOption("auto", "Auto")
         .addOption("cli", "Installed CLI")
@@ -1490,7 +1693,7 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.display();
         }));
-    new Setting(containerEl)
+    new Setting(advanced)
       .setName("CLI executable")
       .setDesc("Optional absolute path or command name. Leave empty to use paperbrain from PATH.")
       .addText((input) => input
@@ -1500,54 +1703,25 @@ class PaperBrainSettingTab extends PluginSettingTab {
           this.plugin.settings.cliPath = value.trim();
           await this.plugin.saveSettings();
         }));
-    new Setting(containerEl)
-      .setName("Python executable")
-      .setDesc("Optional absolute path or command name for Python script mode.")
-      .addText((input) => input
-        .setPlaceholder(process.platform === "win32" ? "python" : "python3")
-        .setValue(this.plugin.settings.pythonPath)
-        .onChange(async (value) => {
-          this.plugin.settings.pythonPath = value.trim();
-          await this.plugin.saveSettings();
-        }));
-    new Setting(containerEl)
-      .setName("Backend checkout path")
-      .setDesc("Folder containing script/paperbrain.py. It may be separate from the Obsidian vault.")
-      .addText((input) => input
-        .setValue(this.plugin.settings.backendPath)
-        .onChange(async (value) => {
-          this.plugin.settings.backendPath = value.trim();
-          await this.plugin.saveSettings();
-        }));
-    new Setting(containerEl)
-      .setName("Backend config file")
-      .setDesc("Optional config YAML path, passed to both installed CLI and Python script runs.")
+    new Setting(advanced)
+      .setName("Backend config override")
+      .setDesc("Optional YAML path passed to CLI and Python script runs.")
       .addText((input) => input
         .setValue(this.plugin.settings.configPath)
         .onChange(async (value) => {
           this.plugin.settings.configPath = value.trim();
           await this.plugin.saveSettings();
         }));
-    new Setting(containerEl)
-      .setName("Vault path")
-      .setDesc("Detected from the current desktop vault on first load. Run records and artifacts are read here.")
+    new Setting(advanced)
+      .setName("Vault path override")
+      .setDesc("Detected from the active desktop vault. Change only when outputs belong in another vault.")
       .addText((input) => input
         .setValue(this.plugin.settings.vaultPath)
         .onChange(async (value) => {
           this.plugin.settings.vaultPath = value.trim();
           await this.plugin.saveSettings();
         }));
-    new Setting(containerEl)
-      .setName("Default provider")
-      .addDropdown((dropdown) => dropdown
-        .addOption("openrouter", "openrouter")
-        .addOption("doubao", "doubao")
-        .setValue(this.plugin.settings.provider)
-        .onChange(async (value) => {
-          this.plugin.settings.provider = value;
-          await this.plugin.saveSettings();
-        }));
-    new Setting(containerEl)
+    new Setting(advanced)
       .setName("Generate podcast by default")
       .addToggle((toggle) => toggle
         .setValue(!!this.plugin.settings.generatePodcast)
@@ -1555,7 +1729,7 @@ class PaperBrainSettingTab extends PluginSettingTab {
           this.plugin.settings.generatePodcast = value;
           await this.plugin.saveSettings();
         }));
-    new Setting(containerEl)
+    new Setting(advanced)
       .setName("Cancel timeout seconds")
       .addText((text) => text
         .setValue(String(this.plugin.settings.cancelTimeoutSeconds))
@@ -1564,6 +1738,66 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
   }
+}
+
+class RunConfirmationModal extends Modal {
+  constructor(app, details, resolve) {
+    super(app);
+    this.details = details;
+    this.resolve = resolve;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: this.details.forceReset ? "Confirm forced run" : "Confirm model usage" });
+    if (this.details.paidDisclosure) {
+      contentEl.createEl("p", {
+        text: "This is the first PaperBrain run that may call paid services. Your backend configuration controls the exact providers and limits.",
+      });
+    }
+    if (this.details.forceReset) {
+      contentEl.createEl("p", {
+        text: "Force resets saved state for the selected date before rerunning the requested stages.",
+      });
+    }
+    const list = contentEl.createEl("ul");
+    list.createEl("li", { text: `Provider: ${this.details.provider}` });
+    list.createEl("li", { text: `Mode: ${this.details.mode}` });
+    list.createEl("li", { text: `Podcast: ${this.details.podcast ? "enabled" : "disabled"}` });
+    list.createEl("li", { text: "Network search: may incur usage according to backend search settings" });
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.closeWith(false));
+    const confirm = actions.createEl("button", { text: this.details.forceReset ? "Reset and run" : "Continue" });
+    confirm.addClass("mod-cta");
+    confirm.addEventListener("click", () => this.closeWith(true));
+    requestAnimationFrame(() => confirm.focus());
+  }
+
+  closeWith(value) {
+    if (this.resolve) this.resolve(value);
+    this.resolve = null;
+    this.close();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (this.resolve) this.resolve(false);
+    this.resolve = null;
+  }
+}
+
+function confirmRun(app, details) {
+  return new Promise((resolve) => new RunConfirmationModal(app, details, resolve).open());
+}
+
+function execFileText(executable, args) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(executable, args, { windowsHide: true, encoding: "utf8", maxBuffer: 1024 * 1024 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout || "");
+    });
+  });
 }
 
 function parseDateUtc(dateText) {
@@ -1718,6 +1952,11 @@ function isTerminalStage(stage) {
 function titleCase(value) {
   const text = textValue(value);
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
+function optionLabel(value) {
+  const labels = { openrouter: "OpenRouter", doubao: "Doubao", week: "Week", month: "Month" };
+  return labels[value] || titleCase(value);
 }
 
 function eventLabel(log) {

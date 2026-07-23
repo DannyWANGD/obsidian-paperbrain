@@ -10,6 +10,8 @@ const {
   buildSpawnOptions,
   buildSiblingInvocation,
   detectVaultPath,
+  detectBackendPath,
+  detectWdPython,
   findExecutable,
   isCompatibleBackendVersion,
   isCurrentProcess,
@@ -18,6 +20,7 @@ const {
   parsePayload,
   processOutcome,
   redactDiagnostics,
+  runConfirmationRequirements,
   safeExternalHttpUrl,
   toVaultRelativePath,
   validateRuntimeSettings,
@@ -51,6 +54,65 @@ test("legacy repoPath migrates to backendPath without replacing the vault", () =
   assert.equal(settings.backendPath, "C:\\backend");
   assert.equal(settings.vaultPath, "D:\\vault");
   assert.equal(settings.repoPath, undefined);
+});
+
+test("settings v2 migrate to v3 without losing user choices", () => {
+  const settings = normalizeRuntimeSettings({
+    settingsVersion: 2,
+    backendPath: "D:\\backend",
+    pythonPath: "D:\\conda\\envs\\wd\\python.exe",
+    provider: "doubao",
+    paidRunDisclosureAccepted: true,
+  });
+  assert.equal(settings.settingsVersion, 3);
+  assert.equal(settings.backendPath, "D:\\backend");
+  assert.equal(settings.provider, "doubao");
+  assert.equal(settings.paidRunDisclosureAccepted, true);
+});
+
+test("wd Python detection follows saved, current Conda, then env-list order", () => {
+  const saved = path.resolve("saved", "python.exe");
+  const current = path.resolve("conda", "envs", "wd");
+  const listed = path.resolve("other", "envs", "wd");
+  const currentPython = path.join(current, process.platform === "win32" ? "python.exe" : "bin/python");
+  const listedPython = path.join(listed, process.platform === "win32" ? "python.exe" : "bin/python");
+  assert.equal(detectWdPython({ savedPath: saved, existsSync: (value) => value === saved }).source, "saved");
+  assert.equal(detectWdPython({
+    env: { CONDA_PREFIX: current },
+    condaJson: JSON.stringify({ envs: [listed] }),
+    existsSync: (value) => value === currentPython || value === listedPython,
+  }).source, "current-conda");
+  assert.equal(detectWdPython({
+    env: {},
+    condaJson: JSON.stringify({ envs: [listed] }),
+    existsSync: (value) => value === listedPython,
+  }).path, listedPython);
+});
+
+test("backend detection only checks the saved checkout and current vault", () => {
+  const saved = path.resolve("saved-backend");
+  const vault = path.resolve("vault-backend");
+  const vaultScript = path.join(vault, "script", "paperbrain.py");
+  const checked = [];
+  const found = detectBackendPath({
+    savedPath: saved,
+    vaultPath: vault,
+    existsSync: (value) => { checked.push(value); return value === vaultScript; },
+  });
+  assert.equal(found, vault);
+  assert.deepEqual(checked, [path.join(saved, "script", "paperbrain.py"), vaultScript]);
+});
+
+test("paid-run disclosure is once per settings profile while force always confirms", () => {
+  assert.deepEqual(runConfirmationRequirements({ paidRunDisclosureAccepted: false }, { command: "run", force: false }), {
+    paidDisclosure: true,
+    forceReset: false,
+  });
+  assert.deepEqual(runConfirmationRequirements({ paidRunDisclosureAccepted: true }, { command: "run", force: true }), {
+    paidDisclosure: false,
+    forceReset: true,
+  });
+  assert.equal(runConfirmationRequirements({ paidRunDisclosureAccepted: false }, { command: "index" }).paidDisclosure, false);
 });
 
 test("auto invocation prefers a local script and falls back to installed CLI", () => {
