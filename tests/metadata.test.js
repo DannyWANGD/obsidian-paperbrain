@@ -89,11 +89,11 @@ test("optional companion plugin snapshot stays versioned and dependency-free", (
   assert.deepEqual(installedIds, ["aqu-translay-translator", "components"]);
   const allIds = [...enabledIds, ...installedIds];
   assert.equal(new Set(allIds).size, allIds.length);
-  const readmes = ["README.md", "README_EN.md", path.join("docs", "COMPANION_PLUGINS.md")]
-    .map((name) => fs.readFileSync(path.join(root, name), "utf8"));
+  const docs = ["README.md", "README_EN.md", path.join("docs", "COMPANION_PLUGINS.md")]
+    .map((name) => ({ name, text: fs.readFileSync(path.join(root, name), "utf8") }));
   for (const id of allIds) {
-    for (const readme of readmes) {
-      assert.equal(readme.includes(`\`${id}\``), true, `${id} should be documented in ${path.basename(readme)}`);
+    for (const doc of docs) {
+      assert.equal(doc.text.includes(`\`${id}\``), true, `${id} should be documented in ${doc.name}`);
     }
   }
 });
