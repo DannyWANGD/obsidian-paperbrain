@@ -860,7 +860,10 @@ class PaperBrainConsoleView extends ItemView {
     if (this.installerRuntime.logs) {
       const installStatus = section.createDiv({ cls: "paperbrain-install-status", attr: { role: "status", "aria-live": "polite" } });
       installStatus.createEl("strong", { text: `Backend installation: ${this.installerRuntime.stage}` });
-      installStatus.createEl("pre", { text: this.installerRuntime.logs });
+      const installLog = installStatus.createEl("pre", { text: this.installerRuntime.logs });
+      requestAnimationFrame(() => {
+        installLog.scrollTop = installLog.scrollHeight;
+      });
     }
   }
 

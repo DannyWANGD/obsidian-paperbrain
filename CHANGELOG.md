@@ -5,6 +5,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-24
+
+### Changed
+
+- The backend installation log now follows the newest output line as progress
+  updates while retaining the complete scrollback.
+
 ## [0.4.2] - 2026-07-24
 
 ### Fixed
@@ -117,7 +124,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...HEAD
+[0.4.3]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...0.4.3
 [0.4.2]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...0.4.2
 [0.4.1]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.3.0...0.4.0
