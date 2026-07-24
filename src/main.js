@@ -6,6 +6,7 @@ const path = require("path");
 const {
   buildInvocation,
   buildSpawnOptions,
+  cliExecutableForEnv,
   condaExecutableCandidates,
   detectBackendPath,
   detectVaultPath,
@@ -23,6 +24,13 @@ const { ProcessManager } = require("./process-manager");
 const { BackendInstaller } = require("./backend-installer");
 const { BACKEND_RELEASE } = require("./backend-release");
 const { MINIFORGE_RELEASE, resolveMiniforgeAsset } = require("./miniforge-release");
+const {
+  MANUAL_PLATFORMS,
+  buildManualInstallCommand,
+  manualInstallReceiptPath,
+  normalizeManualInstallReceipt,
+  platformForManualInstall,
+} = require("./manual-install");
 
 const VIEW_TYPE = "paperbrain-console-view";
 
@@ -184,6 +192,11 @@ module.exports = class PaperBrainPlugin extends Plugin {
       name: "Validate configuration",
       callback: () => this.validateConfiguration(true),
     });
+    this.addCommand({
+      id: "show-paperbrain-backend-terminal-command",
+      name: "Show backend terminal command",
+      callback: () => this.showManualBackendInstall(),
+    });
     const validation = this.validateConfiguration(false);
     if (firstStart) {
       if (validation.ok) {
@@ -234,6 +247,25 @@ module.exports = class PaperBrainPlugin extends Plugin {
   }
 
   async detectSetup() {
+    const receiptPath = manualInstallReceiptPath(os.homedir());
+    try {
+      const rawReceipt = JSON.parse(fs.readFileSync(receiptPath, "utf8").replace(/^\uFEFF/, ""));
+      const receipt = normalizeManualInstallReceipt(rawReceipt, fs.existsSync);
+      if (receipt) {
+        Object.assign(this.settings, {
+          executionMode: "cli",
+          cliPath: receipt.cliPath,
+          pythonPath: receipt.pythonPath,
+          configPath: receipt.configPath,
+          condaPath: receipt.condaPath,
+          installerManaged: true,
+          installedBackendVersion: receipt.backendVersion,
+          managedRuntimePath: receipt.managedRuntimePath,
+        });
+      }
+    } catch (_) {
+      // A missing or stale receipt falls back to the normal constrained detection.
+    }
     const condaPath = await this.detectCondaExecutable();
     let condaJson = "";
     try {
@@ -253,7 +285,22 @@ module.exports = class PaperBrainPlugin extends Plugin {
       existsSync: fs.existsSync,
     });
     if (backendPath) this.settings.backendPath = backendPath;
-    if (python.path) this.settings.pythonPath = python.path;
+    if (python.path) {
+      this.settings.pythonPath = python.path;
+      const envPath = process.platform === "win32"
+        ? path.dirname(python.path)
+        : path.dirname(path.dirname(python.path));
+      const cliPath = cliExecutableForEnv(envPath);
+      const defaultConfigPath = path.join(os.homedir(), ".paperbrain", "config", "config.yaml");
+      if (fs.existsSync(cliPath)) {
+        this.settings.cliPath = cliPath;
+        if (!backendPath) this.settings.executionMode = "cli";
+      }
+      if (fs.existsSync(defaultConfigPath)) {
+        this.settings.configPath = defaultConfigPath;
+        this.settings.installerManaged = true;
+      }
+    }
     if (condaPath) this.settings.condaPath = condaPath;
     this.settings.executionMode = backendPath ? "python-script" : this.settings.executionMode;
     await this.saveSettings();
@@ -345,6 +392,40 @@ module.exports = class PaperBrainPlugin extends Plugin {
     });
     await this.saveSettings();
     new Notice("PaperBrain backend is ready. Add your provider key to .env, then validate setup.", 9000);
+    return true;
+  }
+
+  showManualBackendInstall() {
+    let dependencyIndex;
+    try {
+      dependencyIndex = resolveDependencyIndex(this.settings);
+    } catch (error) {
+      new Notice(error.message, 9000);
+      return false;
+    }
+    if (!this.settings.vaultPath) {
+      new Notice("Set a valid vault path before generating a terminal installation command.", 9000);
+      return false;
+    }
+    const commands = {};
+    try {
+      for (const platform of MANUAL_PLATFORMS) {
+        commands[platform.id] = buildManualInstallCommand(platform.id, {
+          vaultPath: this.settings.vaultPath,
+          dependencyIndex,
+        });
+      }
+    } catch (error) {
+      new Notice(error.message, 9000);
+      return false;
+    }
+    new ManualBackendInstallModal(this.app, {
+      commands,
+      dependencyIndex,
+      platforms: MANUAL_PLATFORMS,
+      selectedPlatform: platformForManualInstall(process.platform),
+      backendVersion: BACKEND_RELEASE.version,
+    }).open();
     return true;
   }
 
@@ -796,7 +877,7 @@ class PaperBrainConsoleView extends ItemView {
   renderSetupGuide(parent, validation) {
     const section = parent.createDiv({ cls: "paperbrain-section paperbrain-setup" });
     section.createEl("h3", { text: "Finish setup" });
-    section.createEl("p", { cls: "paperbrain-muted", text: "Install the fixed PaperBrain backend into wd, then add your provider key and validate. Every system change requires confirmation." });
+    section.createEl("p", { cls: "paperbrain-muted", text: "Install the fixed PaperBrain backend into wd, then add your provider key and validate. Terminal installation is recommended when your shell provides network or proxy settings." });
     const backendReady = Boolean(detectBackendPath({
       savedPath: this.plugin.settings.backendPath,
       vaultPath: this.plugin.settings.vaultPath,
@@ -808,7 +889,7 @@ class PaperBrainConsoleView extends ItemView {
       existsSync: fs.existsSync,
     }).path);
     [
-      ["1", "Backend runtime", backendReady || pythonReady ? "A local PaperBrain runtime was detected." : "Use Install backend to create or reuse wd and install the verified backend release."],
+      ["1", "Backend runtime", backendReady || pythonReady ? "A local PaperBrain runtime was detected." : "Use the recommended terminal command or install inside Obsidian to create or reuse wd."],
       ["2", "Provider key", this.plugin.settings.installerManaged ? "Open the managed .env file and replace the placeholder key." : "API keys stay in a local .env file or operating-system environment, never in plugin settings."],
       ["3", "Provider diagnostics", "Validate setup runs doctor config, env, and llm locally without --live or model charges."],
     ].forEach(([numberText, title, detail]) => {
@@ -821,8 +902,11 @@ class PaperBrainConsoleView extends ItemView {
     const errors = section.createDiv({ cls: "paperbrain-setup-errors", attr: { role: "status" } });
     validation.errors.forEach((error) => errors.createEl("div", { text: error }));
     const actions = section.createDiv({ cls: "paperbrain-actions paperbrain-actions-wide" });
-    const installButton = actions.createEl("button", { text: this.installerRuntime.running ? "Installing backend" : "Install backend" });
-    installButton.addClass("paperbrain-primary");
+    const manualInstallButton = actions.createEl("button", { text: "Terminal install (recommended)" });
+    manualInstallButton.addClass("paperbrain-primary");
+    manualInstallButton.disabled = this.installerRuntime.running || this.process;
+    manualInstallButton.addEventListener("click", () => this.plugin.showManualBackendInstall());
+    const installButton = actions.createEl("button", { text: this.installerRuntime.running ? "Installing backend" : "Install inside Obsidian" });
     installButton.disabled = this.installerRuntime.running || this.process;
     installButton.addEventListener("click", async () => {
       await this.plugin.installBackend();
@@ -1816,9 +1900,17 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.activateView();
           await this.plugin.validateSetup();
           this.display();
-        }))
+        }));
+    new Setting(containerEl)
+      .setName("Backend installation")
+      .setDesc("Terminal installation is recommended when your shell supplies proxy or network settings. The existing in-app installer remains available.")
       .addButton((button) => button
-        .setButtonText(this.plugin.backendInstaller.snapshot().running ? "Installing" : "Install or repair")
+        .setCta()
+        .setButtonText("Show terminal command")
+        .setDisabled(this.plugin.backendInstaller.snapshot().running)
+        .onClick(() => this.plugin.showManualBackendInstall()))
+      .addButton((button) => button
+        .setButtonText(this.plugin.backendInstaller.snapshot().running ? "Installing" : "Install inside Obsidian")
         .setDisabled(this.plugin.backendInstaller.snapshot().running)
         .onClick(async () => {
           await this.plugin.activateView();
@@ -2070,6 +2162,69 @@ class BackendInstallConfirmationModal extends Modal {
 
 function confirmBackendInstall(app, details) {
   return new Promise((resolve) => new BackendInstallConfirmationModal(app, details, resolve).open());
+}
+
+class ManualBackendInstallModal extends Modal {
+  constructor(app, details) {
+    super(app);
+    this.details = details;
+    this.selectedPlatform = details.selectedPlatform;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Install PaperBrain backend ${this.details.backendVersion} in a terminal` });
+    contentEl.createEl("p", {
+      text: "Recommended: run the verified command in your own terminal so downloads inherit that shell's proxy and network environment. The command reuses Conda when available, otherwise installs private Miniforge, then creates or reuses wd.",
+    });
+    const platformField = contentEl.createDiv({ cls: "paperbrain-manual-install-field" });
+    platformField.createEl("label", { text: "Operating system", attr: { for: "paperbrain-manual-platform" } });
+    const platformSelect = platformField.createEl("select", { attr: { id: "paperbrain-manual-platform" } });
+    for (const platform of this.details.platforms) {
+      const option = platformSelect.createEl("option", { value: platform.id, text: platform.label });
+      option.selected = platform.id === this.selectedPlatform;
+    }
+    const sourceText = this.details.dependencyIndex.id === "auto"
+      ? "Auto source selection will download and hash-check the same pinned probe wheel from all four configured indexes, then use the fastest valid source."
+      : `Dependencies will use ${this.details.dependencyIndex.label} (${this.details.dependencyIndex.url}).`;
+    contentEl.createEl("p", { cls: "paperbrain-muted", text: sourceText });
+    const commandArea = contentEl.createEl("textarea", {
+      cls: "paperbrain-manual-install-command",
+      attr: { "aria-label": "Backend terminal installation command", rows: "9", spellcheck: "false" },
+    });
+    commandArea.readOnly = true;
+    const renderCommand = () => {
+      commandArea.value = this.details.commands[this.selectedPlatform];
+      commandArea.scrollTop = 0;
+    };
+    platformSelect.addEventListener("change", () => {
+      this.selectedPlatform = platformSelect.value;
+      renderCommand();
+    });
+    renderCommand();
+    contentEl.createEl("p", {
+      cls: "paperbrain-muted",
+      text: "After the command completes, return to PaperBrain and select Detect again. Installer files are downloaded from the matching plugin Release and verified before execution.",
+    });
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
+    const copyButton = actions.createEl("button", { text: "Copy command" });
+    copyButton.addClass("mod-cta");
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(commandArea.value);
+        new Notice("PaperBrain terminal installation command copied.");
+      } catch (error) {
+        new Notice(`Could not copy the command: ${error.message}`, 8000);
+      }
+    });
+    requestAnimationFrame(() => copyButton.focus());
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
 }
 
 function execFileText(executable, args) {

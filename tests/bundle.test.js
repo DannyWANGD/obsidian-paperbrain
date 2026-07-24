@@ -2,7 +2,9 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const Module = require("node:module");
+const os = require("node:os");
 const path = require("node:path");
 
 class ObsidianBase {}
@@ -83,4 +85,61 @@ test("backend installation passes the resolved automatic dependency source to th
   assert.ok(installPlan);
   assert.equal(installPlan.dependencyIndex.id, "auto");
   assert.equal(installPlan.dependencyIndex.candidates.length, 4);
+});
+
+test("terminal installation exposes verified commands for Windows, macOS, and Linux", () => {
+  const PluginClass = loadPluginClass();
+  const plugin = new PluginClass();
+  openedModalDetails = null;
+  plugin.app = {};
+  plugin.settings = {
+    dependencySource: "auto",
+    customDependencyIndex: "",
+    vaultPath: "/tmp/paperbrain-vault",
+  };
+
+  assert.equal(plugin.showManualBackendInstall(), true);
+  assert.ok(openedModalDetails);
+  assert.equal(openedModalDetails.backendVersion, "0.3.5");
+  assert.deepEqual(Object.keys(openedModalDetails.commands).sort(), ["darwin", "linux", "win32"]);
+  assert.match(openedModalDetails.commands.win32, /install-backend\.ps1/);
+  assert.match(openedModalDetails.commands.darwin, /install-backend\.sh/);
+  assert.match(openedModalDetails.commands.linux, /sha256sum -c -/);
+  for (const command of Object.values(openedModalDetails.commands)) {
+    assert.match(command, /releases\/download\/0\.4\.5/);
+    assert.match(command, /auto/);
+  }
+});
+
+test("setup detection wires a manually installed wd CLI into plugin settings", async (t) => {
+  const PluginClass = loadPluginClass();
+  const plugin = new PluginClass();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "paperbrain-manual-detect-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const envPath = path.join(root, "wd");
+  const pythonPath = process.platform === "win32"
+    ? path.join(envPath, "python.exe")
+    : path.join(envPath, "bin", "python");
+  const cliPath = process.platform === "win32"
+    ? path.join(envPath, "Scripts", "paperbrain.exe")
+    : path.join(envPath, "bin", "paperbrain");
+  fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+  fs.mkdirSync(path.dirname(cliPath), { recursive: true });
+  fs.writeFileSync(pythonPath, "");
+  fs.writeFileSync(cliPath, "");
+  plugin.settings = {
+    backendPath: "",
+    vaultPath: root,
+    pythonPath,
+    condaPath: "",
+    executionMode: "auto",
+  };
+  plugin.detectCondaExecutable = async () => "";
+  plugin.saveSettings = async () => {};
+
+  const result = await plugin.detectSetup();
+
+  assert.equal(result.pythonPath, pythonPath);
+  assert.equal(plugin.settings.cliPath, cliPath);
+  assert.equal(plugin.settings.executionMode, "cli");
 });

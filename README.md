@@ -6,20 +6,22 @@ PaperBrain Console 是 [PaperBrain Python 流水线](https://github.com/DannyWAN
 的 Obsidian 桌面控制台，用于安装后端、启动或停止任务、查看运行状态，以及打开写入当前
 vault 的摘要、研究笔记、PDF、图像和音频。
 
-插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.4.4` 的一键安装器固定使用
+插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.4.5` 的安装器固定使用
 PaperBrain 后端 `0.3.5`。
 
 ## 快速开始
 
 1. 安装并启用 BRAT，选择 **Add beta plugin**，输入
    `https://github.com/DannyWANGD/obsidian-paperbrain`。
-2. 启用 **PaperBrain Console**，打开控制台并选择 **Install backend**。
-3. 确认安装器列出的本地和网络操作，等待后端安装完成。
+2. 启用 **PaperBrain Console**，打开控制台并选择推荐的
+   **Terminal install (recommended)**。
+3. 选择 Windows、macOS 或 Linux，复制命令并在自己的终端中执行。完成后返回插件，
+   选择 **Detect again**。
 4. 选择 **Open API key file**，填写 API Key 并保存。
 5. 选择 **Validate setup**。验证通过后选择运行模式并点击 **Run**。
 
-正常使用不需要终端、Python 源码仓库或预先安装 Python。插件会优先复用现有 Conda；
-没有可用 Conda 时才安装独立 Miniforge。
+也可以选择 **Install inside Obsidian** 完成原有的一键安装。两种方式都会优先复用现有
+Conda；没有可用 Conda 时安装独立 Miniforge，均不需要 Python 源码仓库或预装 Python。
 
 ## 系统要求
 
@@ -41,7 +43,12 @@ GitHub 自动生成的 Source code 压缩包不能替代这三个运行文件。
 
 ## 后端安装
 
-选择 **Install backend** 后，安装器会：
+推荐选择 **Terminal install (recommended)**，复制当前系统的命令并在自己的终端执行。
+这样下载会继承该终端中的 `HTTP_PROXY`、`HTTPS_PROXY` 等网络环境。命令先从对应的插件
+Release 下载 `install-backend.ps1`（Windows）或 `install-backend.sh`（macOS/Linux），
+校验固定 SHA-256 后才执行。
+
+不希望使用终端时，可选择 **Install inside Obsidian**。两种安装方式都会：
 
 1. 检测并优先复用现有 Conda。
 2. 创建或复用名为 `wd` 的环境。新环境使用 Python 3.10；现有环境必须是
@@ -55,7 +62,9 @@ GitHub 自动生成的 Source code 压缩包不能替代这三个运行文件。
    不会混用多个索引。也可在设置中手动固定一个源。
 6. 在 `~/.paperbrain/config` 创建配置并指向当前 vault。已有配置和 `.env` 不会被覆盖。
 
-所有下载和环境变更都需要用户确认。临时文件会在安装结束或失败后清理。
+终端方式以用户执行复制的命令作为确认；Obsidian 内安装会显示确认窗口。临时文件会在
+安装结束或失败后清理。终端安装完成后选择 **Detect again**，插件会自动记录 `wd` 中的
+Python、CLI 和默认配置路径。
 
 | 内容 | Windows | macOS / Linux |
 | --- | --- | --- |
@@ -100,11 +109,12 @@ API Key 不会写入 Obsidian 的插件设置。**Validate setup** 会执行本�
 
 | 插件 | 后端 | Obsidian |
 | --- | --- | --- |
-| 0.4.4 | 安装器固定 0.3.5；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
+| 0.4.5 | 安装器固定 0.3.5；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
 
 ## 故障排查
 
-- **安装失败**：保持控制台打开并重试 **Install backend**，查看失败阶段和最后一条错误。
+- **终端安装失败**：保留终端输出，确认代理和 GitHub 可访问后重新执行同一命令。
+- **Obsidian 内安装失败**：保持控制台打开并重试 **Install inside Obsidian**，查看失败阶段和最后一条错误。
 - **所有包索引均失败**：确认网络允许访问所选索引，或在设置中手动固定可用源。
 - **找不到 `paperbrain`**：将 CLI executable 设置为 `wd` 中 `paperbrain` 的绝对路径。
 - **验证失败**：确认 **Vault path** 与后端实际 vault 一致，并检查
@@ -140,8 +150,8 @@ npm run check
 ```
 
 源码位于 `src/`，构建产物 `main.js` 由 Release 工作流生成。发布标签必须与
-`manifest.json` 版本一致，Release 必须包含 `main.js`、`manifest.json`、`styles.css`
-和 `checksums.txt`。
+`manifest.json` 版本一致，Release 必须包含 `main.js`、`manifest.json`、`styles.css`、
+`install-backend.ps1`、`install-backend.sh` 和 `checksums.txt`。
 
 开发与发布政策见 [CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md) 和
 [CHANGELOG.md](CHANGELOG.md)。

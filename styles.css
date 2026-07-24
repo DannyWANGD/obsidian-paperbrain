@@ -691,6 +691,32 @@
   font-size: var(--font-ui-small);
 }
 
+.paperbrain-manual-install-field {
+  display: grid;
+  gap: var(--size-4-1);
+  margin: var(--size-4-3) 0;
+}
+
+.paperbrain-manual-install-field label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.paperbrain-manual-install-field select {
+  width: 100%;
+}
+
+.paperbrain-manual-install-command {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  white-space: pre;
+  overflow: auto;
+}
+
 .paperbrain-setup-errors {
   padding: 10px 0;
 }

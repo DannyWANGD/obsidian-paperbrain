@@ -7,23 +7,24 @@ PaperBrain Console is the Obsidian desktop interface for the
 installs the backend, starts or stops runs, shows progress, and opens the
 digests, research notes, PDFs, figures, and audio written to the active vault.
 
-The plugin is desktop-only because it starts local processes. Plugin `0.4.4`
+The plugin is desktop-only because it starts local processes. Plugin `0.4.5`
 installs the fixed PaperBrain backend release `0.3.5`.
 
 ## Quick Start
 
 1. Install and enable BRAT. Choose **Add beta plugin** and enter
    `https://github.com/DannyWANGD/obsidian-paperbrain`.
-2. Enable **PaperBrain Console**, open the console, and select **Install backend**.
-3. Review and confirm the listed local and network operations, then wait for
-   installation to finish.
+2. Enable **PaperBrain Console**, open the console, and select the recommended
+   **Terminal install (recommended)**.
+3. Select Windows, macOS, or Linux, copy the command, and run it in your own
+   terminal. Return to the plugin and select **Detect again** when it finishes.
 4. Select **Open API key file**, enter your API key, and save the file.
 5. Select **Validate setup**. When validation passes, choose a run mode and
    select **Run**.
 
-The normal workflow requires no terminal, backend checkout, or preinstalled
-Python. Existing Conda is reused when possible; otherwise the plugin installs
-an isolated Miniforge runtime.
+You can instead select **Install inside Obsidian** to keep the existing one-click
+flow. Both methods reuse Conda when possible and otherwise install isolated
+Miniforge. Neither requires a backend checkout or preinstalled Python.
 
 ## Requirements
 
@@ -47,7 +48,15 @@ archives do not replace the three runtime files.
 
 ## Backend Installation
 
-After you select **Install backend**, the installer:
+The recommended **Terminal install (recommended)** action generates a command
+for Windows, macOS, or Linux. Running it in your own terminal lets downloads
+inherit that shell's `HTTP_PROXY`, `HTTPS_PROXY`, and related network settings.
+The command downloads `install-backend.ps1` on Windows or `install-backend.sh`
+on macOS/Linux from the matching plugin Release and verifies its fixed SHA-256
+before execution.
+
+Select **Install inside Obsidian** when you do not want to use a terminal. Both
+installation methods:
 
 1. Detects and reuses an existing Conda installation when available.
 2. Creates or reuses an environment named `wd`. A new environment uses Python
@@ -67,8 +76,10 @@ After you select **Install backend**, the installer:
 6. Creates configuration under `~/.paperbrain/config` for the active vault.
    Existing configuration and `.env` files are preserved.
 
-Every download and environment change requires confirmation. Temporary files
-are removed after installation succeeds or fails.
+Running the copied command confirms terminal installation; in-app installation
+uses a confirmation dialog. Temporary files are removed after success or
+failure. After terminal installation, select **Detect again** so the plugin can
+record the `wd` Python, CLI, and default configuration paths.
 
 | Item | Windows | macOS / Linux |
 | --- | --- | --- |
@@ -124,12 +135,14 @@ and terms.
 
 | Plugin | Backend | Obsidian |
 | --- | --- | --- |
-| 0.4.4 | Installer pins 0.3.5; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
+| 0.4.5 | Installer pins 0.3.5; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
 ## Troubleshooting
 
-- **Installation failed:** keep the console open, retry **Install backend**,
-  and inspect the failed stage and final error.
+- **Terminal installation failed:** keep the terminal output, confirm proxy and
+  GitHub access, then run the same command again.
+- **In-app installation failed:** keep the console open, retry
+  **Install inside Obsidian**, and inspect the failed stage and final error.
 - **Every package index failed:** confirm network access or select a known
   working source in settings.
 - **`paperbrain` was not found:** set CLI executable to its absolute path in
@@ -171,7 +184,8 @@ npm run check
 
 Source lives under `src/`. The Release workflow builds `main.js`. The release
 tag must match `manifest.json`, and each Release must include `main.js`,
-`manifest.json`, `styles.css`, and `checksums.txt`.
+`manifest.json`, `styles.css`, `install-backend.ps1`, `install-backend.sh`, and
+`checksums.txt`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md) for project policies.

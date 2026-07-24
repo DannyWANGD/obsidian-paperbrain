@@ -5,6 +5,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-24
+
+### Added
+
+- A recommended terminal installation flow that generates copyable, verified
+  commands for Windows PowerShell, macOS Terminal, and Linux terminals.
+- Versioned PowerShell and Bash installer assets that inherit the terminal's
+  proxy environment while preserving the same pinned downloads, SHA-256
+  checks, Conda reuse, private Miniforge fallback, and fastest-source probe as
+  the in-app installer.
+
+### Changed
+
+- Setup detection now records the installed `wd` CLI and default configuration
+  after a terminal installation. The existing in-app installer remains
+  available as a separate choice.
+
 ## [0.4.4] - 2026-07-24
 
 ### Changed
@@ -131,7 +148,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.5...HEAD
+[0.4.5]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...0.4.5
 [0.4.4]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...0.4.4
 [0.4.3]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...0.4.3
 [0.4.2]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...0.4.2

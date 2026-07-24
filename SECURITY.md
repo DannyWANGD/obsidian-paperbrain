@@ -26,7 +26,9 @@ remediation guidance after a fix is available.
 Issues in the Python PaperBrain backend should be reported privately to that
 project rather than in this plugin repository.
 
-The controlled installer executes only fixed Miniforge and PaperBrain release
-assets after SHA-256 verification and explicit confirmation. Reports involving
-checksum validation, installer path ownership, process execution, package
-sources, or managed-runtime cleanup are security issues for this plugin.
+Both the in-app installer and the versioned terminal installers execute only
+fixed Miniforge and PaperBrain release assets after SHA-256 verification and
+explicit user action. The generated terminal command also verifies its
+PowerShell or Bash installer asset before execution. Reports involving checksum
+validation, installer path ownership, process execution, package sources, or
+managed-runtime cleanup are security issues for this plugin.
