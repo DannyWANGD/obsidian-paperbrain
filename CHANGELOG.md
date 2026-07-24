@@ -5,6 +5,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-24
+
+### Fixed
+
+- The macOS/Linux terminal installer now reads the Conda environment list with
+  the base Python executable instead of taking the last `conda run` output
+  line. Conda versions that append a blank line no longer hide an existing or
+  newly created `wd` environment.
+- The terminal installer switches to the user's home directory before starting
+  Conda, so it also remains valid when BRAT replaced the plugin directory from
+  which the terminal was opened.
+
 ## [0.4.5] - 2026-07-24
 
 ### Added
@@ -148,7 +160,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.5...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.6...HEAD
+[0.4.6]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.5...0.4.6
 [0.4.5]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...0.4.5
 [0.4.4]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...0.4.4
 [0.4.3]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...0.4.3

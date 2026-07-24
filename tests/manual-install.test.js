@@ -29,6 +29,15 @@ test("manual installer assets have the hashes embedded in generated commands", (
   }
 });
 
+test("the Unix installer resolves wd without parsing conda-run trailing output", () => {
+  const installer = fs.readFileSync(path.join(root, "installers", "install-backend.sh"), "utf8");
+  assert.match(installer, /cd "\$HOME"/);
+  assert.match(installer, /"\$CONDA_PATH" info --base/);
+  assert.match(installer, /sys\.stdout\.write/);
+  assert.doesNotMatch(installer, /run -n base python/);
+  assert.doesNotMatch(installer, /tail -n 1/);
+});
+
 test("Windows command downloads, verifies, and runs the PowerShell installer", () => {
   const command = buildManualInstallCommand("win32", {
     vaultPath: "C:\\Researcher's Vault",

@@ -106,7 +106,7 @@ test("terminal installation exposes verified commands for Windows, macOS, and Li
   assert.match(openedModalDetails.commands.darwin, /install-backend\.sh/);
   assert.match(openedModalDetails.commands.linux, /sha256sum -c -/);
   for (const command of Object.values(openedModalDetails.commands)) {
-    assert.match(command, /releases\/download\/0\.4\.5/);
+    assert.match(command, /releases\/download\/0\.4\.6/);
     assert.match(command, /auto/);
   }
 });

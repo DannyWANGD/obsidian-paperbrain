@@ -55,6 +55,10 @@ if [ "$INDEX_URL" != "auto" ]; then
   esac
 fi
 
+# BRAT can replace the plugin directory while a terminal still points at its
+# old inode. Conda subprocesses need a live working directory.
+cd "$HOME"
+
 RUNTIME_ROOT="$HOME/.paperbrain/runtime/miniforge3"
 CONFIG_DIR="$HOME/.paperbrain/config"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paperbrain-install.XXXXXX")"
@@ -165,13 +169,20 @@ fi
 
 "$CONDA_PATH" --version
 env_list="$TEMP_DIR/conda-envs.json"
-"$CONDA_PATH" env list --json > "$env_list"
-env_path="$("$CONDA_PATH" run -n base python -c 'import json, os, sys; print(next((p for p in json.load(open(sys.argv[1], encoding="utf-8"))["envs"] if os.path.basename(os.path.normpath(p)).lower() == "wd"), ""))' "$env_list" | tail -n 1)"
+find_wd_environment() {
+  local base_root
+  local base_python
+  "$CONDA_PATH" env list --json > "$env_list"
+  base_root="$("$CONDA_PATH" info --base)"
+  base_python="$base_root/bin/python"
+  [ -x "$base_python" ] || { printf 'Conda base Python was not found: %s\n' "$base_python" >&2; return 1; }
+  "$base_python" -c 'import json, os, sys; sys.stdout.write(next((p for p in json.load(open(sys.argv[1], encoding="utf-8"))["envs"] if os.path.basename(os.path.normpath(p)).lower() == "wd"), ""))' "$env_list"
+}
+env_path="$(find_wd_environment)"
 if [ -z "$env_path" ]; then
   printf 'Creating wd with Python 3.10 and pip 24 or later...\n'
   "$CONDA_PATH" create --yes --name wd --override-channels --channel https://conda.anaconda.org/conda-forge 'python=3.10' 'pip>=24'
-  "$CONDA_PATH" env list --json > "$env_list"
-  env_path="$("$CONDA_PATH" run -n base python -c 'import json, os, sys; print(next((p for p in json.load(open(sys.argv[1], encoding="utf-8"))["envs"] if os.path.basename(os.path.normpath(p)).lower() == "wd"), ""))' "$env_list" | tail -n 1)"
+  env_path="$(find_wd_environment)"
 fi
 [ -n "$env_path" ] || { printf 'Conda did not report a wd environment.\n' >&2; exit 1; }
 python_path="$env_path/bin/python"
