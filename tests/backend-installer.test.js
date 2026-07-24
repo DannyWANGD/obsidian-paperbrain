@@ -15,16 +15,47 @@ function sha(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-function fixtureRelease(wheel, requirements) {
+function fixtureRelease(wheel, requirements, probe = Buffer.from("probe-wheel")) {
   return {
     repository: "example/PaperBrain",
-    version: "0.3.4",
-    tag: "backend-0.3.4",
+    version: "0.3.5",
+    tag: "backend-0.3.5",
+    dependencyProbe: { requirement: "probe-package==1.0.0", sha256: sha(probe) },
     assets: {
-      wheel: { name: "paperbrain-0.3.4-py3-none-any.whl", sha256: sha(wheel) },
+      wheel: { name: "paperbrain-0.3.5-py3-none-any.whl", sha256: sha(wheel) },
       requirements: { name: "requirements.lock", sha256: sha(requirements) },
     },
   };
+}
+
+const TUNA_INDEX = Object.freeze({
+  id: "tuna",
+  label: "Tsinghua TUNA",
+  url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple",
+});
+const PYPI_INDEX = Object.freeze({
+  id: "pypi",
+  label: "Official PyPI",
+  url: "https://pypi.org/simple",
+});
+const ALIYUN_INDEX = Object.freeze({
+  id: "aliyun",
+  label: "Alibaba Cloud",
+  url: "https://mirrors.aliyun.com/pypi/simple",
+});
+const USTC_INDEX = Object.freeze({
+  id: "ustc",
+  label: "USTC",
+  url: "https://mirrors.ustc.edu.cn/pypi/simple",
+});
+const AUTO_INDEX = Object.freeze({
+  id: "auto",
+  label: "Automatic (fastest available)",
+  candidates: [PYPI_INDEX, ALIYUN_INDEX, USTC_INDEX, TUNA_INDEX],
+});
+
+function compatibleRuntime(python = [3, 10, 14], pip = "24.3.1") {
+  return JSON.stringify({ python, pip });
 }
 
 function completedChild(stdout = "", stderr = "", onStart = () => {}) {
@@ -51,7 +82,7 @@ async function temporaryRoot(t) {
   return root;
 }
 
-test("an existing Conda installation is preferred and its wd environment is reused", async (t) => {
+test("an existing Conda installation is preferred and its Python 3.9 wd environment is reused", async (t) => {
   const root = await temporaryRoot(t);
   const wheel = Buffer.from("wheel");
   const requirements = Buffer.from("requirements");
@@ -62,6 +93,7 @@ test("an existing Conda installation is preferred and its wd environment is reus
     calls.push({ executable, args });
     if (args[0] === "--version") return completedChild("conda 26.3.1\n");
     if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+    if (args[0] === "-c") return completedChild(compatibleRuntime([3, 9, 18]));
     if (args[0] === "bootstrap") {
       return completedChild(JSON.stringify({
         ok: true,
@@ -81,6 +113,7 @@ test("an existing Conda installation is preferred and its wd environment is reus
     configDir: path.join(root, "config"),
     vaultPath: path.join(root, "vault"),
     release,
+    dependencyIndex: TUNA_INDEX,
   });
 
   assert.equal(result.ok, true);
@@ -88,6 +121,96 @@ test("an existing Conda installation is preferred and its wd environment is reus
   assert.equal(result.envPath, envPath);
   assert.equal(calls.some((call) => call.args[0] === "create"), false);
   assert.equal(calls[0].executable, path.join(root, "conda"));
+  const dependencyCall = calls.find((call) => call.args[0] === "-m" && call.args[1] === "pip" && call.args.includes("--require-hashes"));
+  assert.equal(dependencyCall.args[dependencyCall.args.indexOf("--index-url") + 1], TUNA_INDEX.url);
+  assert.equal(dependencyCall.args.includes("--extra-index-url"), false);
+});
+
+test("automatic source selection probes real wheels and uses only the fastest verified source", async (t) => {
+  const root = await temporaryRoot(t);
+  const wheel = Buffer.from("wheel");
+  const requirements = Buffer.from("requirements");
+  const probe = Buffer.from("probe-wheel");
+  const release = fixtureRelease(wheel, requirements, probe);
+  const envPath = path.join(root, "existing-conda", "envs", "wd");
+  const calls = [];
+  const clock = [0, 210, 210, 300, 300, 345, 345, 405];
+  const spawn = (executable, args) => {
+    calls.push({ executable, args });
+    if (args[0] === "--version") return completedChild("conda 26.3.1\n");
+    if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+    if (args[0] === "-c") return completedChild(compatibleRuntime([3, 9, 18]));
+    if (args[0] === "-m" && args[1] === "pip" && args[2] === "download") {
+      const destination = args[args.indexOf("--dest") + 1];
+      return completedChild("", "", () => {
+        fs.mkdirSync(destination, { recursive: true });
+        fs.writeFileSync(path.join(destination, "probe-package-1.0.0-py3-none-any.whl"), probe);
+      });
+    }
+    if (args[0] === "bootstrap") {
+      return completedChild(JSON.stringify({
+        ok: true,
+        command: "bootstrap",
+        config_path: path.join(root, "config", "config.yaml"),
+        env_path: path.join(root, "config", ".env"),
+      }));
+    }
+    return completedChild();
+  };
+  const installer = new BackendInstaller({
+    spawn,
+    now: () => clock.shift(),
+    download: async (url) => url.endsWith("requirements.lock") ? requirements : wheel,
+  });
+  const result = await installer.install({
+    condaExecutable: path.join(root, "conda"),
+    configDir: path.join(root, "config"),
+    vaultPath: path.join(root, "vault"),
+    release,
+    dependencyIndex: AUTO_INDEX,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dependencySource, "ustc");
+  assert.equal(result.dependencyIndexUrl, USTC_INDEX.url);
+  const probes = calls.filter((call) => call.args[0] === "-m" && call.args[2] === "download");
+  assert.equal(probes.length, 4);
+  assert.equal(probes.every((call) => call.args.includes("--no-cache-dir")), true);
+  assert.equal(probes.every((call) => call.args.includes("probe-package==1.0.0")), true);
+  const dependencyCall = calls.find((call) => call.args[0] === "-m" && call.args[2] === "install" && call.args.includes("--require-hashes"));
+  assert.equal(dependencyCall.args[dependencyCall.args.indexOf("--index-url") + 1], USTC_INDEX.url);
+  assert.equal(dependencyCall.args.includes(PYPI_INDEX.url), false);
+});
+
+test("an existing wd below Python 3.9 stops before any backend download", async (t) => {
+  const root = await temporaryRoot(t);
+  const envPath = path.join(root, "envs", "wd");
+  let downloads = 0;
+  const calls = [];
+  const installer = new BackendInstaller({
+    spawn: (executable, args) => {
+      calls.push({ executable, args });
+      if (args[0] === "--version") return completedChild("conda test\n");
+      if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+      if (args[0] === "-c") return completedChild(compatibleRuntime([3, 8, 20]));
+      return completedChild();
+    },
+    download: async () => { downloads += 1; return Buffer.from("unexpected"); },
+  });
+  const result = await installer.install({
+    condaExecutable: "conda",
+    configDir: path.join(root, "config"),
+    vaultPath: path.join(root, "vault"),
+    release: fixtureRelease(Buffer.from("wheel"), Buffer.from("requirements")),
+    dependencyIndex: TUNA_INDEX,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Python 3\.8\.20/);
+  assert.match(result.error, /did not modify wd or download backend files/);
+  assert.equal(downloads, 0);
+  assert.equal(calls.some((call) => call.args[0] === "install"), false);
+  assert.equal(calls.some((call) => call.args[0] === "create"), false);
 });
 
 test("missing Conda installs verified Miniforge privately before creating wd", async (t) => {
@@ -131,6 +254,7 @@ test("missing Conda installs verified Miniforge privately before creating wd", a
         env_path: path.join(root, "config", ".env"),
       }));
     }
+    if (args[0] === "-c") return completedChild(compatibleRuntime());
     return completedChild();
   };
   const installer = new BackendInstaller({
@@ -147,6 +271,7 @@ test("missing Conda installs verified Miniforge privately before creating wd", a
     configDir: path.join(root, "config"),
     vaultPath: path.join(root, "vault"),
     release,
+    dependencyIndex: TUNA_INDEX,
     miniforge: { release: miniforgeRelease, asset, installDir: managedRoot },
   });
 
@@ -159,6 +284,7 @@ test("missing Conda installs verified Miniforge privately before creating wd", a
   const createCall = calls.find((call) => call.args[0] === "create");
   assert.deepEqual(createCall.args.slice(0, 5), ["create", "--yes", "--prefix", envPath, "--override-channels"]);
   assert.equal(createCall.args[createCall.args.indexOf("--channel") + 1], "https://conda.anaconda.org/conda-forge");
+  assert.equal(createCall.args.includes("pip>=24"), true);
   assert.equal(calls.findIndex((call) => String(call.executable).endsWith(asset.name)) < calls.findIndex((call) => call.args[0] === "create"), true);
 });
 
@@ -172,6 +298,7 @@ test("a failed checksum prevents package installation", async (t) => {
       calls.push({ executable, args });
       if (args[0] === "--version") return completedChild("conda test\n");
       if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+      if (args[0] === "-c") return completedChild(compatibleRuntime());
       return completedChild();
     },
     download: async () => Buffer.from("tampered"),
@@ -181,11 +308,12 @@ test("a failed checksum prevents package installation", async (t) => {
     configDir: path.join(root, "config"),
     vaultPath: path.join(root, "vault"),
     release,
+    dependencyIndex: TUNA_INDEX,
   });
 
   assert.equal(result.ok, false);
   assert.match(result.error, /SHA-256 verification failed/);
-  assert.equal(calls.some((call) => call.args.includes("pip")), false);
+  assert.equal(calls.some((call) => call.args[0] === "-m" && call.args[1] === "pip"), false);
 });
 
 test("stop during a download prevents package installation and finishes as cancelled", async (t) => {
@@ -204,6 +332,7 @@ test("stop during a download prevents package installation and finishes as cance
       calls.push({ executable, args });
       if (args[0] === "--version") return completedChild("conda test\n");
       if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+      if (args[0] === "-c") return completedChild(compatibleRuntime());
       return completedChild();
     },
     download: async () => {
@@ -216,6 +345,7 @@ test("stop during a download prevents package installation and finishes as cance
     configDir: path.join(root, "config"),
     vaultPath: path.join(root, "vault"),
     release,
+    dependencyIndex: TUNA_INDEX,
   });
   await downloadStarted;
   assert.equal(installer.stop(), true);
@@ -224,7 +354,7 @@ test("stop during a download prevents package installation and finishes as cance
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, "cancelled");
-  assert.equal(calls.some((call) => call.args.includes("pip")), false);
+  assert.equal(calls.some((call) => call.args[0] === "-m" && call.args[1] === "pip"), false);
 });
 
 test("the embedded Miniforge manifest covers supported desktop architectures", () => {

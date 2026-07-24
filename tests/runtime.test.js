@@ -17,10 +17,12 @@ const {
   isCompatibleBackendVersion,
   isCurrentProcess,
   mergeFailurePayload,
+  normalizeDependencyIndexUrl,
   normalizeRuntimeSettings,
   parsePayload,
   processOutcome,
   redactDiagnostics,
+  resolveDependencyIndex,
   runConfirmationRequirements,
   safeExternalHttpUrl,
   toVaultRelativePath,
@@ -57,7 +59,7 @@ test("legacy repoPath migrates to backendPath without replacing the vault", () =
   assert.equal(settings.repoPath, undefined);
 });
 
-test("settings v2 migrate to v4 without losing user choices", () => {
+test("settings v2 migrate to v5 without losing user choices", () => {
   const settings = normalizeRuntimeSettings({
     settingsVersion: 2,
     backendPath: "D:\\backend",
@@ -65,12 +67,41 @@ test("settings v2 migrate to v4 without losing user choices", () => {
     provider: "doubao",
     paidRunDisclosureAccepted: true,
   });
-  assert.equal(settings.settingsVersion, 4);
+  assert.equal(settings.settingsVersion, 5);
   assert.equal(settings.backendPath, "D:\\backend");
   assert.equal(settings.provider, "doubao");
   assert.equal(settings.paidRunDisclosureAccepted, true);
   assert.equal(settings.condaPath, "");
   assert.equal(settings.managedRuntimePath, "");
+  assert.equal(settings.dependencySource, "auto");
+  assert.equal(settings.customDependencyIndex, "");
+});
+
+test("dependency downloads default to automatic source selection and accept one explicit secure simple index", () => {
+  assert.deepEqual(resolveDependencyIndex({}), {
+    id: "auto",
+    label: "Automatic (fastest available)",
+    candidates: [
+      { id: "pypi", label: "Official PyPI", url: "https://pypi.org/simple" },
+      { id: "aliyun", label: "Alibaba Cloud", url: "https://mirrors.aliyun.com/pypi/simple" },
+      { id: "ustc", label: "USTC", url: "https://mirrors.ustc.edu.cn/pypi/simple" },
+      { id: "tuna", label: "Tsinghua TUNA", url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" },
+    ],
+  });
+  assert.equal(resolveDependencyIndex({ dependencySource: "tuna" }).url, "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple");
+  assert.equal(normalizeDependencyIndexUrl("https://mirror.example.org/pypi/simple/"), "https://mirror.example.org/pypi/simple");
+  assert.equal(resolveDependencyIndex({
+    dependencySource: "custom",
+    customDependencyIndex: "https://mirror.example.org/pypi/simple/",
+  }).url, "https://mirror.example.org/pypi/simple");
+  assert.throws(() => resolveDependencyIndex({
+    dependencySource: "custom",
+    customDependencyIndex: "http://mirror.example.org/simple",
+  }), /HTTPS URL ending in \/simple/);
+  assert.throws(() => resolveDependencyIndex({
+    dependencySource: "custom",
+    customDependencyIndex: "https://user:secret@mirror.example.org/simple",
+  }), /HTTPS URL ending in \/simple/);
 });
 
 test("Conda detection candidates prioritize the saved executable before environment and PATH", () => {

@@ -31,7 +31,7 @@ Conda。PaperBrain 不依赖其他 Obsidian 插件；后文列出的配套插件
 
 - Obsidian 桌面版 1.5.0 或更高版本
 - 为托管运行时和 Python 包预留约 1 GB 磁盘空间
-- 安装时能够访问 GitHub Releases、conda-forge 和 PyPI
+- 安装时能够访问 GitHub Releases、conda-forge 和所选 Python 包索引
 - 所选 LLM 供应商的账号和 API Key
 
 高级用户也可以自行提供兼容的 PaperBrain 0.3.x 后端与 Python 3.9 或更高版本。
@@ -70,10 +70,10 @@ Conda。找到可用 Conda 后会直接复用，并在其中创建或复用唯�
 
 安装器随后会：
 
-1. 创建或复用包含 Python 3.10 的 `wd` 环境。
-2. 从 `backend-0.3.4` GitHub Release 下载固定版本的 PaperBrain wheel 和哈希锁定依赖。
+1. 不存在 `wd` 时创建 Python 3.10 环境；复用现有 `wd` 前确认其 Python 不低于 3.9、pip 不低于 24。版本不兼容时停止，不修改环境，也不下载后端文件。
+2. 从 `backend-0.3.5` GitHub Release 下载固定版本的 PaperBrain wheel 和哈希锁定依赖。
 3. 在执行或安装前，用嵌入的 SHA-256 校验所有下载资产。
-4. 从 `https://pypi.org/simple` 安装锁定依赖，再以不解析额外依赖的方式安装后端 wheel。
+4. 默认使用 **Auto**：分别从官方 PyPI、阿里云、USTC 与清华 TUNA 下载同一个固定的 1.6 MB wheel，校验 SHA-256 后选择成功且最快的源。也可手动固定其中一个源，或使用 Advanced 中的单一自定义 HTTPS simple index。正式安装只使用最终选中的一个索引，所有依赖仍必须通过锁文件哈希校验。
 5. 在 `~/.paperbrain/config` 创建配置并指向当前 vault；已有配置和 `.env` 内容会保留。
 
 具体路径如下：
@@ -106,8 +106,9 @@ Obsidian vault，而不是写入托管运行时目录。
 - **Backend directory** 仅供高级 Python-script 模式使用，必须是包含
   `script/paperbrain.py` 的源码目录；一键托管安装使用 `paperbrain` CLI，不需要源码仓库。
 - **wd Python** 是 `wd` Conda 环境中的 Python 绝对路径。
+- **Dependency download source** 默认使用 Auto，在正式安装前通过实际 1.6 MB wheel 下载和 SHA-256 校验比较官方 PyPI、阿里云、USTC 与清华 TUNA；也可手动固定其中一个源。每次正式安装只使用一个索引。
 - **Default provider** 控制新任务默认选择的模型供应商。
-- **Advanced** 包含 CLI 模式、配置与 vault 覆盖、Podcast 默认值和取消超时。
+- **Advanced** 包含自定义 HTTPS 包索引、CLI 模式、配置与 vault 覆盖、Podcast 默认值和取消超时。
 
 **Validate setup** 会依次运行 `doctor config`、`doctor env`、`doctor llm`，且不会添加
 `--live`，因此验证过程不会发出模型请求或产生模型费用。
@@ -119,7 +120,7 @@ Obsidian vault，而不是写入托管运行时目录。
 ## 可选配套插件
 
 PaperBrain Console 不依赖下列任何插件。此表来自 PaperBrain 开发 vault 的实际本地快照：
-10 个插件当前启用并与 Console 0.4.0 一起检查，另外 2 个已安装但当前未启用。
+10 个插件当前启用并与 Console 0.4.1 一起检查，另外 2 个已安装但当前未启用。
 版本是兼容性记录，不是强制锁定版本；“已安装”不代表已验证联用效果。
 
 | 插件 | 本地版本 | 当前状态 | 推荐用途 |
@@ -173,7 +174,7 @@ vault，并先使用非关键数据测试新版本。
 
 | 插件版本 | PaperBrain 后端 | Obsidian |
 | --- | --- | --- |
-| 0.4.x | 0.3.1 至小于 0.4.0；安装器固定选择 0.3.4 | 1.5.0 或更高，桌面版 |
+| 0.4.x | 0.3.1 至小于 0.4.0；0.4.1 安装器固定选择 0.3.5 | 1.5.0 或更高，桌面版 |
 | 0.3.x | 0.3.1 至小于 0.4.0 | 1.5.0 或更高，桌面版 |
 | 0.2.x | 0.3.1 至小于 0.4.0 | 1.5.0 或更高，桌面版 |
 
@@ -183,8 +184,8 @@ vault，并先使用非关键数据测试新版本。
 
 - 安装失败时保持控制台打开，然后重试 **Install backend**。重试前会清理不完整的托管
   Miniforge 和临时下载。
-- 公司网络需要允许访问 GitHub Releases、conda-forge 软件源和
-  `https://pypi.org/simple`；校验失败不会被绕过。
+- 公司网络需要允许访问 GitHub Releases、conda-forge 软件源和当前选择的 Python 包索引；
+  Auto 会用一个经过哈希校验的 wheel 实测官方 PyPI、阿里云、USTC 与清华 TUNA，失败的源不会被选择。校验失败不会被绕过。
 - 如果验证无法解析 `paperbrain`，请将 CLI executable 设置为绝对路径。图形应用获取的
   `PATH` 可能与终端不同。
 - Python-script 模式失败时，检查 Python 路径，并确认后端目录包含

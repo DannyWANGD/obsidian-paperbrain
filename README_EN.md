@@ -36,7 +36,7 @@ Obsidian plugin; the companion plugins documented later are optional.
 
 - Obsidian desktop 1.5.0 or later
 - Approximately 1 GB of free disk space for the managed runtime and packages
-- Network access to GitHub Releases, conda-forge, and PyPI during installation
+- Network access to GitHub Releases, conda-forge, and the selected Python package index during installation
 - An API account and key for the LLM provider selected in the backend
 
 Advanced users can instead supply a compatible PaperBrain backend in the
@@ -80,13 +80,18 @@ supported. Windows arm64 is not currently supported by this automatic path.
 
 The installer then:
 
-1. Creates or reuses `wd` with Python 3.10.
+1. Creates `wd` with Python 3.10 when absent. Before reusing an existing `wd`,
+   it requires Python 3.9 or later and pip 24 or later. An incompatible
+   environment is not modified, and backend downloads do not start.
 2. Downloads the fixed PaperBrain backend wheel and hash-locked requirements
-   from the `backend-0.3.4` GitHub Release.
+   from the `backend-0.3.5` GitHub Release.
 3. Verifies every downloaded installer or backend asset against an embedded
    SHA-256 value before executing or installing it.
-4. Installs locked dependencies from `https://pypi.org/simple` and installs the
-   backend wheel without resolving unpinned dependencies.
+4. In the default **Auto** mode, downloads the same fixed 1.6 MB wheel from
+   official PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA, verifies its SHA-256,
+   and selects the fastest working source. A source or one custom HTTPS simple
+   index can also be fixed manually. Each full installation uses one index,
+   and every package must still match the lock-file hashes.
 5. Creates configuration under `~/.paperbrain/config` and points it at the
    active vault. Existing configuration and `.env` values are preserved.
 
@@ -128,9 +133,13 @@ only after the explicit installer confirmation.
   the installed `paperbrain` CLI and does not require a repository checkout.
 - **wd Python** is the absolute Python executable in the existing `wd` Conda
   environment.
+- **Dependency download source** defaults to Auto, which tests an actual 1.6 MB
+  wheel from official PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA before
+  selecting the fastest verified source. Any source can be fixed manually.
+  Each full installation uses exactly one package index.
 - **Default provider** controls the provider selected for a new run.
-- **Advanced** contains CLI mode, config and vault overrides, podcast default,
-  and the cancellation timeout.
+- **Advanced** contains the custom HTTPS package index, CLI mode, config and
+  vault overrides, podcast default, and the cancellation timeout.
 
 **Validate setup** runs `doctor config`, `doctor env`, and `doctor llm` in that
 order. It never adds `--live`, so validation does not send a model request.
@@ -144,7 +153,7 @@ a run; `paperbrain doctor` performs deeper backend checks.
 
 PaperBrain Console works without any of these plugins. This table is the actual
 local snapshot from the PaperBrain development vault: ten plugins are enabled
-and checked alongside Console 0.4.0, while two are installed but currently
+and checked alongside Console 0.4.1, while two are installed but currently
 disabled. Versions are compatibility records, not hard requirements; installed
 does not mean integration-tested.
 
@@ -208,7 +217,7 @@ egress design before PDF and resource-link validation will work.
 
 | Plugin | PaperBrain backend | Obsidian |
 | --- | --- | --- |
-| 0.4.x | 0.3.1 to <0.4.0; installer selects 0.3.4 | 1.5.0 or later, desktop |
+| 0.4.x | 0.3.1 to <0.4.0; the 0.4.1 installer selects 0.3.5 | 1.5.0 or later, desktop |
 | 0.3.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 | 0.2.x | 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
@@ -221,7 +230,9 @@ contract. Keep both sides within a tested row of this table.
   Incomplete managed Miniforge files and temporary downloads are removed before
   a controlled retry.
 - Corporate firewalls must allow GitHub Release downloads, conda-forge package
-  channels, and `https://pypi.org/simple`. Checksum failures are never bypassed.
+  channels, and the selected Python package index. Auto mode tests official
+  PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA with a verified wheel; a failing
+  source is not selected. Checksum failures are never bypassed.
 - If validation cannot resolve `paperbrain`, set the CLI executable to its
   absolute path. GUI applications often receive a different `PATH` than a
   terminal.

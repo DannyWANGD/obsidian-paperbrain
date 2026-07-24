@@ -3,8 +3,31 @@
 const fs = require("fs");
 const path = require("path");
 
-const SETTINGS_VERSION = 4;
+const SETTINGS_VERSION = 5;
 const EXECUTION_MODES = new Set(["auto", "cli", "python-script"]);
+const DEPENDENCY_SOURCES = new Set(["auto", "pypi", "aliyun", "ustc", "tuna", "custom"]);
+const DEPENDENCY_INDEXES = Object.freeze({
+  pypi: Object.freeze({
+    id: "pypi",
+    label: "Official PyPI",
+    url: "https://pypi.org/simple",
+  }),
+  aliyun: Object.freeze({
+    id: "aliyun",
+    label: "Alibaba Cloud",
+    url: "https://mirrors.aliyun.com/pypi/simple",
+  }),
+  ustc: Object.freeze({
+    id: "ustc",
+    label: "USTC",
+    url: "https://mirrors.ustc.edu.cn/pypi/simple",
+  }),
+  tuna: Object.freeze({
+    id: "tuna",
+    label: "Tsinghua TUNA",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple",
+  }),
+});
 const MIN_BACKEND_VERSION = [0, 3, 1];
 const MAX_BACKEND_VERSION = [0, 4, 0];
 const SECRET_FIELD_PATTERN = /(?:api[_-]?key|authorization|password|secret|token)/i;
@@ -24,6 +47,44 @@ function safeExternalHttpUrl(value) {
   } catch (_) {
     return "";
   }
+}
+
+function normalizeDependencyIndexUrl(value) {
+  const raw = textValue(value);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) return "";
+    if (!/\/simple\/?$/i.test(parsed.pathname)) return "";
+    parsed.pathname = parsed.pathname.replace(/\/$/, "");
+    return parsed.href.replace(/\/$/, "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function resolveDependencyIndex(settings = {}) {
+  const source = DEPENDENCY_SOURCES.has(textValue(settings.dependencySource))
+    ? textValue(settings.dependencySource)
+    : "auto";
+  if (source === "auto") {
+    return {
+      id: "auto",
+      label: "Automatic (fastest available)",
+      candidates: [
+        DEPENDENCY_INDEXES.pypi,
+        DEPENDENCY_INDEXES.aliyun,
+        DEPENDENCY_INDEXES.ustc,
+        DEPENDENCY_INDEXES.tuna,
+      ].map((index) => ({ ...index })),
+    };
+  }
+  if (source !== "custom") return { ...DEPENDENCY_INDEXES[source] };
+  const url = normalizeDependencyIndexUrl(settings.customDependencyIndex);
+  if (!url) {
+    throw new Error("Custom dependency mirror must be a credential-free HTTPS URL ending in /simple.");
+  }
+  return { id: "custom", label: "Custom HTTPS mirror", url };
 }
 
 function detectVaultPath(app) {
@@ -188,6 +249,8 @@ function normalizeRuntimeSettings(raw = {}, options = {}) {
     installerManaged: Boolean(raw.installerManaged),
     installedBackendVersion: textValue(raw.installedBackendVersion),
     managedRuntimePath: textValue(raw.managedRuntimePath),
+    dependencySource: DEPENDENCY_SOURCES.has(textValue(raw.dependencySource)) ? textValue(raw.dependencySource) : "auto",
+    customDependencyIndex: textValue(raw.customDependencyIndex),
   };
 }
 
@@ -523,6 +586,7 @@ function boundedAppend(current, incoming, maxLength = 200000) {
 }
 
 module.exports = {
+  DEPENDENCY_INDEXES,
   SETTINGS_VERSION,
   backendScriptPath,
   boundedAppend,
@@ -541,9 +605,11 @@ module.exports = {
   localDateKey,
   mergeFailurePayload,
   normalizeRuntimeSettings,
+  normalizeDependencyIndexUrl,
   parsePayload,
   parseCondaEnvironmentList,
   pythonExecutableForEnv,
+  resolveDependencyIndex,
   processOutcome,
   redactDiagnostics,
   runConfirmationRequirements,

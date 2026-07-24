@@ -46,12 +46,14 @@ test("one-click installer assets are versioned, checksummed, and documented", ()
   ]) {
     assert.match(asset.sha256, /^[a-f0-9]{64}$/, `${asset.name} needs a fixed SHA-256`);
   }
+  assert.match(BACKEND_RELEASE.dependencyProbe.requirement, /^[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9._+-]*$/);
+  assert.match(BACKEND_RELEASE.dependencyProbe.sha256, /^[a-f0-9]{64}$/);
   const readme = fs.readFileSync(path.join(root, "README_EN.md"), "utf8");
   assert.match(readme, /Install backend/);
   assert.match(readme, /Miniforge 26\.3\.2-2/);
   assert.match(readme, /does not modify\s+(?:the )?system PATH/i);
   assert.match(readme, /~\/\.paperbrain\/runtime\/miniforge3/);
-  assert.match(readme, /backend-0\.3\.4/);
+  assert.match(readme, /backend-0\.3\.5/);
 });
 
 test("Chinese and English setup guides are switchable and installation-complete", () => {
@@ -64,7 +66,7 @@ test("Chinese and English setup guides are switchable and installation-complete"
     for (const asset of ["main.js", "manifest.json", "styles.css", "checksums.txt"]) {
       assert.equal(readme.includes(`\`${asset}\``), true, `${asset} should be explained in both READMEs`);
     }
-    assert.match(readme, /backend-0\.3\.4/);
+    assert.match(readme, /backend-0\.3\.5/);
     assert.match(readme, /Miniforge 26\.3\.2-2/);
     assert.match(readme, /\.paperbrain[\\/]runtime[\\/]miniforge3/);
     assert.match(readme, /\.paperbrain[\\/]config/);

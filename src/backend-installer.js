@@ -17,6 +17,7 @@ class BackendInstaller {
     this.arch = options.arch || process.arch;
     this.path = options.pathApi || path;
     this.os = options.osApi || os;
+    this.now = options.now || Date.now;
     this.listeners = new Set();
     this.child = null;
     this.disposed = false;
@@ -83,7 +84,7 @@ class BackendInstaller {
           : ["--name", "wd"];
         await this.runCommand(conda.executable, [
           "create", "--yes", ...destination,
-          "--override-channels", "--channel", "https://conda.anaconda.org/conda-forge", "python=3.10", "pip",
+          "--override-channels", "--channel", "https://conda.anaconda.org/conda-forge", "python=3.10", "pip>=24",
         ]);
         envPath = await this.findWdEnvironment(conda.executable, managedEnvRoot);
       } else {
@@ -93,6 +94,7 @@ class BackendInstaller {
 
       const pythonPath = pythonExecutableForEnv(envPath, this.platform, this.path);
       const cliPath = cliExecutableForEnv(envPath, this.platform, this.path);
+      await this.validateWdRuntime(pythonPath);
       const downloaded = {};
       for (const [key, asset] of Object.entries(plan.release.assets)) {
         this.setStage("download", `Downloading ${asset.name} from the fixed PaperBrain ${plan.release.version} release.`);
@@ -100,10 +102,11 @@ class BackendInstaller {
         downloaded[key] = target;
       }
 
-      this.setStage("dependencies", "Installing the locked Python dependencies from PyPI into wd.");
+      const dependencyIndex = await this.selectDependencyIndex(plan, pythonPath, tempDir);
+      this.setStage("dependencies", `Installing locked Python dependencies from ${dependencyIndex.label} into wd.`);
       await this.runCommand(pythonPath, [
         "-m", "pip", "install", "--disable-pip-version-check",
-        "--index-url", "https://pypi.org/simple", "--require-hashes", "-r", downloaded.requirements,
+        "--index-url", dependencyIndex.url, "--require-hashes", "-r", downloaded.requirements,
       ]);
       this.setStage("backend", `Installing PaperBrain backend ${plan.release.version} into wd.`);
       await this.runCommand(pythonPath, [
@@ -125,6 +128,8 @@ class BackendInstaller {
         condaPath: conda.executable,
         condaManaged: conda.managed,
         managedRuntimePath: conda.managed ? plan.miniforge.installDir : "",
+        dependencySource: dependencyIndex.id,
+        dependencyIndexUrl: dependencyIndex.url,
         configPath: payload.config_path,
         envFilePath: payload.env_path,
       };
@@ -168,6 +173,20 @@ class BackendInstaller {
       if (!asset.name || !/^[a-f0-9]{64}$/.test(asset.sha256 || "")) {
         throw new Error(`The backend release manifest is incomplete for ${asset.name || "an asset"}.`);
       }
+    }
+    const dependencyIndex = plan.dependencyIndex || {};
+    if (dependencyIndex.id === "auto") {
+      const candidates = Array.isArray(dependencyIndex.candidates) ? dependencyIndex.candidates : [];
+      const probe = plan.release.dependencyProbe || {};
+      if (candidates.length < 2 || candidates.some((index) => !index.id || !index.label || !validDependencyIndexUrl(index.url))) {
+        throw new Error("The automatic dependency source candidates are invalid.");
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(probe.requirement || "")
+          || !/^[a-f0-9]{64}$/.test(probe.sha256 || "")) {
+        throw new Error("The automatic dependency source probe is not pinned and checksummed.");
+      }
+    } else if (!dependencyIndex.id || !dependencyIndex.label || !validDependencyIndexUrl(dependencyIndex.url)) {
+      throw new Error("The dependency download source is invalid. Choose a credential-free HTTPS mirror ending in /simple.");
     }
     if (!plan.condaExecutable) {
       const miniforge = plan.miniforge || {};
@@ -266,6 +285,69 @@ class BackendInstaller {
       .find((entry) => this.path.basename(entry).toLowerCase() === "wd" && this.isWithinRoot(entry, requiredRoot)) || "";
   }
 
+  async selectDependencyIndex(plan, pythonPath, tempDir) {
+    if (plan.dependencyIndex.id !== "auto") return plan.dependencyIndex;
+    const successful = [];
+    for (const candidate of plan.dependencyIndex.candidates) {
+      this.setStage("source-probe", `Testing an actual package download from ${candidate.label}.`);
+      const started = this.now();
+      try {
+        await this.probeDependencyIndex(pythonPath, candidate, plan.release.dependencyProbe, tempDir);
+        const elapsedMs = Math.max(1, this.now() - started);
+        successful.push({ ...candidate, elapsedMs });
+        this.appendLog(`${candidate.label} probe passed in ${elapsedMs} ms.`);
+      } catch (error) {
+        if (this.state.stopping) throw error;
+        this.appendLog(`${candidate.label} probe failed: ${error.message}`);
+      }
+    }
+    if (!successful.length) {
+      throw new Error("No dependency source passed the real package download and SHA-256 probe. Choose a working source in settings and retry.");
+    }
+    successful.sort((left, right) => left.elapsedMs - right.elapsedMs);
+    const selected = successful[0];
+    this.appendLog(`Selected ${selected.label} (${selected.elapsedMs} ms) for the hash-locked dependency installation.`);
+    return selected;
+  }
+
+  async probeDependencyIndex(pythonPath, candidate, probe, tempDir) {
+    const probeDir = this.path.join(tempDir, `source-probe-${candidate.id}`);
+    await this.fs.mkdir(probeDir, { recursive: true });
+    await this.runCommand(pythonPath, [
+      "-m", "pip", "download", "--disable-pip-version-check", "--no-deps",
+      "--only-binary=:all:", "--no-cache-dir", "--timeout", "20", "--retries", "1",
+      "--dest", probeDir, "--index-url", candidate.url, probe.requirement,
+    ]);
+    const files = await this.fs.readdir(probeDir);
+    if (files.length !== 1) throw new Error("The source probe did not produce exactly one wheel.");
+    const bytes = await this.fs.readFile(this.path.join(probeDir, files[0]));
+    const actual = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (actual !== probe.sha256) throw new Error("The source probe wheel failed SHA-256 verification.");
+  }
+
+  async validateWdRuntime(pythonPath) {
+    this.setStage("environment", "Checking that wd uses a compatible Python and pip before downloading backend files.");
+    const code = [
+      "import json, sys",
+      "import pip",
+      "print(json.dumps({'python': [sys.version_info.major, sys.version_info.minor, sys.version_info.micro], 'pip': pip.__version__}))",
+    ].join("; ");
+    const result = await this.runCommand(pythonPath, ["-c", code]);
+    const payload = parsePayload(result.stdout);
+    if (!payload || !Array.isArray(payload.python) || typeof payload.pip !== "string") {
+      throw new Error("Could not determine the Python and pip versions in wd. No backend files were downloaded.");
+    }
+    const pythonVersion = payload.python.map((part) => Number(part) || 0);
+    const pythonText = pythonVersion.join(".");
+    if (compareVersion(pythonVersion, [3, 9, 0]) < 0) {
+      throw new Error(`Existing wd uses Python ${pythonText}. PaperBrain requires Python 3.9 or later. The installer did not modify wd or download backend files. Upgrade or recreate wd yourself, then retry.`);
+    }
+    if (compareVersion(parseVersion(payload.pip), [24, 0, 0]) < 0) {
+      throw new Error(`Existing wd uses pip ${payload.pip}. PaperBrain requires pip 24 or later. The installer did not modify wd or download backend files. Upgrade pip in wd yourself, then retry.`);
+    }
+    this.appendLog(`Compatible wd runtime detected: Python ${pythonText}, pip ${payload.pip}.`);
+  }
+
   isWithinRoot(target, requiredRoot) {
     if (!requiredRoot) return true;
     const relative = this.path.relative(this.path.resolve(requiredRoot), this.path.resolve(target));
@@ -334,4 +416,27 @@ function lastLine(value) {
   return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
 }
 
-module.exports = { BackendInstaller, managedCondaExecutable };
+function parseVersion(value) {
+  return String(value || "").split(".").slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function compareVersion(left, right) {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] || 0) - (right[index] || 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function validDependencyIndexUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:"
+      && !parsed.username && !parsed.password && !parsed.search && !parsed.hash
+      && /\/simple\/?$/i.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { BackendInstaller, compareVersion, managedCondaExecutable, validDependencyIndexUrl };

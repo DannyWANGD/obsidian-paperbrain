@@ -5,6 +5,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-23
+
+### Changed
+
+- Backend dependency downloads default to an actual, hash-verified 1.6 MB wheel
+  speed test across official PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA, then
+  use only the fastest working source. Any source or one credential-free HTTPS
+  index can be fixed manually.
+- Newly created `wd` environments require pip 24 or later.
+
+### Fixed
+
+- The installer now validates that an existing `wd` uses Python 3.9 or later
+  and pip 24 or later before downloading or modifying backend files.
+
 ## [0.4.0] - 2026-07-23
 
 ### Added
@@ -91,7 +106,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...HEAD
+[0.4.1]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/DannyWANGD/obsidian-paperbrain/releases/tag/0.2.0
