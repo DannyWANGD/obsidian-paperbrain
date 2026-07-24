@@ -6,7 +6,7 @@ PaperBrain Console 是 [PaperBrain Python 流水线](https://github.com/DannyWAN
 的 Obsidian 桌面控制台，用于安装后端、启动或停止任务、查看运行状态，以及打开写入当前
 vault 的摘要、研究笔记、PDF、图像和音频。
 
-插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.4.6` 的安装器固定使用
+插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.4.7` 的安装器固定使用
 PaperBrain 后端 `0.3.5`。
 
 ## 快速开始
@@ -92,6 +92,7 @@ API Key 不会写入 Obsidian 的插件设置。**Validate setup** 会执行本�
 - **Dependency download source**：默认 Auto，也可固定 PyPI、阿里云、USTC、TUNA 或一个
   不含凭据的 HTTPS simple index。
 - **Default provider**：新任务默认使用的模型供应商。
+- **API key file**：随时打开本地 `.env` 文件；API Key 不写入 Obsidian 插件设置。
 - **Advanced**：源码后端、CLI、配置路径、vault、Podcast 和取消超时等高级选项。
 
 ## 数据、网络与费用
@@ -109,7 +110,7 @@ API Key 不会写入 Obsidian 的插件设置。**Validate setup** 会执行本�
 
 | 插件 | 后端 | Obsidian |
 | --- | --- | --- |
-| 0.4.6 | 安装器固定 0.3.5；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
+| 0.4.7 | 安装器固定 0.3.5；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
 
 ## 故障排查
 

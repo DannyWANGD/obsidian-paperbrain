@@ -56,6 +56,9 @@ function loadPluginClass() {
 
 test("built main.js exports an Obsidian plugin class", () => {
   assert.equal(typeof loadPluginClass(), "function");
+  const bundle = fs.readFileSync(path.resolve(__dirname, "..", "main.js"), "utf8");
+  assert.match(bundle, /API key file/);
+  assert.match(bundle, /Open \.env file/);
 });
 
 test("backend installation passes the resolved automatic dependency source to the installer", async () => {
@@ -106,7 +109,7 @@ test("terminal installation exposes verified commands for Windows, macOS, and Li
   assert.match(openedModalDetails.commands.darwin, /install-backend\.sh/);
   assert.match(openedModalDetails.commands.linux, /sha256sum -c -/);
   for (const command of Object.values(openedModalDetails.commands)) {
-    assert.match(command, /releases\/download\/0\.4\.6/);
+    assert.match(command, /releases\/download\/0\.4\.7/);
     assert.match(command, /auto/);
   }
 });
@@ -142,4 +145,15 @@ test("setup detection wires a manually installed wd CLI into plugin settings", a
   assert.equal(result.pythonPath, pythonPath);
   assert.equal(plugin.settings.cliPath, cliPath);
   assert.equal(plugin.settings.executionMode, "cli");
+});
+
+test("the API key file remains addressable without the setup guide", () => {
+  const PluginClass = loadPluginClass();
+  const plugin = new PluginClass();
+  plugin.settings = { configPath: "" };
+  assert.equal(plugin.managedEnvFilePath(), path.join(os.homedir(), ".paperbrain", "config", ".env"));
+
+  const customConfig = path.join(os.tmpdir(), "paperbrain-custom-config", "config.yaml");
+  plugin.settings.configPath = customConfig;
+  assert.equal(plugin.managedEnvFilePath(), path.join(path.dirname(customConfig), ".env"));
 });

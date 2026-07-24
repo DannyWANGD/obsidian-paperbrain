@@ -430,9 +430,9 @@ module.exports = class PaperBrainPlugin extends Plugin {
   }
 
   openManagedEnvFile() {
-    const envPath = this.settings.configPath ? path.join(path.dirname(this.settings.configPath), ".env") : "";
-    if (!envPath || !fs.existsSync(envPath)) {
-      new Notice("The managed .env file does not exist. Install or repair the backend first.");
+    const envPath = this.managedEnvFilePath();
+    if (!fs.existsSync(envPath)) {
+      new Notice(`The API key file does not exist at ${envPath}. Complete backend installation first.`, 9000);
       return;
     }
     if (process.platform === "win32") {
@@ -444,6 +444,14 @@ module.exports = class PaperBrainPlugin extends Plugin {
     require("electron").shell.openPath(envPath).then((error) => {
       if (error) new Notice("Unable to open the PaperBrain .env file.");
     });
+  }
+
+  managedEnvFilePath() {
+    const configPath = String(this.settings.configPath || "").trim();
+    const configDir = configPath
+      ? path.dirname(configPath)
+      : path.join(os.homedir(), ".paperbrain", "config");
+    return path.join(configDir, ".env");
   }
 
   openSettings() {
@@ -1962,6 +1970,12 @@ class PaperBrainSettingTab extends PluginSettingTab {
           this.plugin.settings.provider = value;
           await this.plugin.saveSettings();
         }));
+    new Setting(containerEl)
+      .setName("API key file")
+      .setDesc("Open the local .env file used by OpenRouter or Doubao. API keys are never stored in Obsidian plugin settings.")
+      .addButton((button) => button
+        .setButtonText("Open .env file")
+        .onClick(() => this.plugin.openManagedEnvFile()));
     const advanced = containerEl.createEl("details", { cls: "paperbrain-settings-advanced" });
     advanced.createEl("summary", { text: "Advanced" });
     if (this.plugin.settings.dependencySource === "custom") {

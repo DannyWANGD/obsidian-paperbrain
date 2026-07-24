@@ -5,6 +5,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-07-24
+
+### Changed
+
+- Plugin settings now contain a permanent **API key file** action for opening
+  the local `.env` used by OpenRouter or Doubao. It remains available after
+  runtime detection hides the initial setup guide.
+- The action falls back to `~/.paperbrain/config/.env` before a saved config
+  path exists and reports the expected path when backend setup is incomplete.
+
 ## [0.4.6] - 2026-07-24
 
 ### Fixed
@@ -160,7 +170,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.6...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.7...HEAD
+[0.4.7]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.6...0.4.7
 [0.4.6]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.5...0.4.6
 [0.4.5]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...0.4.5
 [0.4.4]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...0.4.4
