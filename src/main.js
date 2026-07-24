@@ -12,6 +12,7 @@ const {
   detectWdPython,
   normalizeRuntimeSettings,
   redactDiagnostics,
+  resolveDependencyIndex,
   runConfirmationRequirements,
   safeExternalHttpUrl,
   toVaultRelativePath,
@@ -26,7 +27,7 @@ const { MINIFORGE_RELEASE, resolveMiniforgeAsset } = require("./miniforge-releas
 const VIEW_TYPE = "paperbrain-console-view";
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 4,
+  settingsVersion: 5,
   executionMode: "auto",
   cliPath: "",
   pythonPath: "",
@@ -42,6 +43,8 @@ const DEFAULT_SETTINGS = {
   installerManaged: false,
   installedBackendVersion: "",
   managedRuntimePath: "",
+  dependencySource: "auto",
+  customDependencyIndex: "",
 };
 
 const PANELS = [
@@ -287,6 +290,13 @@ module.exports = class PaperBrainPlugin extends Plugin {
       return false;
     }
     const condaPath = await this.detectCondaExecutable();
+    let dependencyIndex;
+    try {
+      dependencyIndex = resolveDependencyIndex(this.settings);
+    } catch (error) {
+      new Notice(error.message, 9000);
+      return false;
+    }
     const miniforgeAsset = resolveMiniforgeAsset(process.platform, process.arch);
     if (!condaPath && !miniforgeAsset) {
       new Notice(`Automatic runtime installation is not available for ${process.platform}/${process.arch}.`, 9000);
@@ -302,6 +312,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
       miniforgeAsset,
       vaultPath: this.settings.vaultPath,
       release: BACKEND_RELEASE,
+      dependencyIndex,
     });
     if (!accepted) return false;
     const result = await this.backendInstaller.install({
@@ -309,6 +320,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
       configDir,
       vaultPath: this.settings.vaultPath,
       release: BACKEND_RELEASE,
+      dependencyIndex,
       miniforge: {
         release: MINIFORGE_RELEASE,
         asset: miniforgeAsset,
@@ -320,7 +332,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
       return false;
     }
     Object.assign(this.settings, {
-      settingsVersion: 4,
+      settingsVersion: 5,
       executionMode: "cli",
       cliPath: result.cliPath,
       pythonPath: result.pythonPath,
@@ -1830,6 +1842,22 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
+      .setName("Dependency download source")
+      .setDesc("Auto downloads one fixed 1.6 MB wheel from PyPI, Alibaba Cloud, USTC, and TUNA, verifies its hash, then uses the fastest working source.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("auto", "Auto (fastest available)")
+        .addOption("pypi", "Official PyPI")
+        .addOption("aliyun", "Alibaba Cloud")
+        .addOption("ustc", "USTC")
+        .addOption("tuna", "Tsinghua TUNA")
+        .addOption("custom", "Custom HTTPS mirror")
+        .setValue(this.plugin.settings.dependencySource)
+        .onChange(async (value) => {
+          this.plugin.settings.dependencySource = value;
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+    new Setting(containerEl)
       .setName("Default provider")
       .addDropdown((dropdown) => dropdown
         .addOption("openrouter", "OpenRouter")
@@ -1841,6 +1869,18 @@ class PaperBrainSettingTab extends PluginSettingTab {
         }));
     const advanced = containerEl.createEl("details", { cls: "paperbrain-settings-advanced" });
     advanced.createEl("summary", { text: "Advanced" });
+    if (this.plugin.settings.dependencySource === "custom") {
+      new Setting(advanced)
+        .setName("Custom dependency mirror")
+        .setDesc("Credential-free HTTPS simple-index URL. It must end in /simple.")
+        .addText((input) => input
+          .setPlaceholder("https://mirror.example.org/pypi/simple")
+          .setValue(this.plugin.settings.customDependencyIndex)
+          .onChange(async (value) => {
+            this.plugin.settings.customDependencyIndex = value.trim();
+            await this.plugin.saveSettings();
+          }));
+    }
     new Setting(advanced)
       .setName("Conda executable")
       .setDesc("Optional absolute path to conda. Detection also checks the active environment, wd Python location, PATH, and common user installs.")
@@ -1988,10 +2028,16 @@ class BackendInstallConfirmationModal extends Modal {
         text: `Install it privately under ${this.details.managedRuntimePath} without changing PATH or registering system Python.`,
       });
     }
-    list.createEl("li", { text: "Create or reuse the isolated Conda environment wd with Python 3.10." });
+    list.createEl("li", { text: "Create wd with Python 3.10 when absent, or reuse an existing wd only when it already has Python 3.9 or later and pip 24 or later." });
+    list.createEl("li", { text: "An incompatible existing wd is never changed automatically; installation stops before backend files are downloaded." });
     list.createEl("li", { text: "Download the fixed wheel and locked dependency file from the PaperBrain GitHub Release." });
     list.createEl("li", { text: "Verify both downloads with embedded SHA-256 checksums before execution." });
-    list.createEl("li", { text: "Install exact locked dependencies from https://pypi.org into wd; this may take several minutes." });
+    if (this.details.dependencyIndex.id === "auto") {
+      list.createEl("li", { text: "Download and hash-check one fixed 1.6 MB probe wheel from official PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA, then select the fastest working source." });
+      list.createEl("li", { text: "Install all exact hash-locked dependencies from that one selected source into wd; sources are never mixed." });
+    } else {
+      list.createEl("li", { text: `Install exact hash-locked dependencies from ${this.details.dependencyIndex.label} (${this.details.dependencyIndex.url}) into wd; this may take several minutes.` });
+    }
     list.createEl("li", { text: `Create configuration under ${this.details.configDir}; existing .env content is preserved.` });
     list.createEl("li", { text: `Write generated papers only to the active vault: ${this.details.vaultPath}.` });
     contentEl.createEl("p", {

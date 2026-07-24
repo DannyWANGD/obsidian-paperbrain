@@ -5,6 +5,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-24
+
+### Fixed
+
+- The plugin now resolves the selected dependency source and passes it to both
+  the installation confirmation and backend installer. Version 0.4.1 omitted
+  this value, causing every one-click backend installation to fail before any
+  download began.
+- A bundle-level regression test now verifies the complete Auto-source wiring
+  from the plugin entry point to the backend installer.
+
 ## [0.4.1] - 2026-07-23
 
 ### Changed
@@ -106,7 +117,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...HEAD
+[0.4.2]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...0.4.2
 [0.4.1]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.2.0...0.3.0

@@ -7,7 +7,7 @@ PaperBrain Console is the Obsidian desktop interface for the
 installs the backend, starts or stops runs, shows progress, and opens the
 digests, research notes, PDFs, figures, and audio written to the active vault.
 
-The plugin is desktop-only because it starts local processes. Plugin `0.4.1`
+The plugin is desktop-only because it starts local processes. Plugin `0.4.2`
 installs the fixed PaperBrain backend release `0.3.5`.
 
 ## Quick Start
@@ -124,7 +124,7 @@ and terms.
 
 | Plugin | Backend | Obsidian |
 | --- | --- | --- |
-| 0.4.1 | Installer pins 0.3.5; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
+| 0.4.2 | Installer pins 0.3.5; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
 ## Troubleshooting
 
