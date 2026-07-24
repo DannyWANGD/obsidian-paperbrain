@@ -5,6 +5,22 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-24
+
+### Added
+
+- Proxy modes for inheriting the Obsidian environment, using one manual
+  credential-free HTTP(S) proxy, or forcing direct connections.
+- A connection test covering the plugin downloader and the backend's live
+  Hugging Face and arXiv diagnostics without model requests.
+
+### Changed
+
+- In-app installation and backend runs now share the selected proxy
+  environment. Terminal installation continues to inherit its own shell.
+- The installer now pins PaperBrain backend 0.3.6.
+- GitHub Release publishing now marks versioned releases as stable.
+
 ## [0.4.7] - 2026-07-24
 
 ### Changed
@@ -170,7 +186,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.7...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.7...0.5.0
 [0.4.7]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.6...0.4.7
 [0.4.6]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.5...0.4.6
 [0.4.5]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...0.4.5

@@ -6,8 +6,8 @@ PaperBrain Console 是 [PaperBrain Python 流水线](https://github.com/DannyWAN
 的 Obsidian 桌面控制台，用于安装后端、启动或停止任务、查看运行状态，以及打开写入当前
 vault 的摘要、研究笔记、PDF、图像和音频。
 
-插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.4.7` 的安装器固定使用
-PaperBrain 后端 `0.3.5`。
+插件需要启动本地进程，因此仅支持 Obsidian 桌面版。插件 `0.5.0` 的安装器固定使用
+PaperBrain 后端 `0.3.6`。
 
 ## 快速开始
 
@@ -56,7 +56,7 @@ Release 下载 `install-backend.ps1`（Windows）或 `install-backend.sh`（macO
 3. 如果没有可用 Conda，从 conda-forge 下载并校验 Miniforge 26.3.2-2，安装到
    `~/.paperbrain/runtime/miniforge3`。该安装不修改系统 PATH、不初始化 shell，
    也不需要管理员权限。
-4. 从 `backend-0.3.5` Release 下载 wheel 与哈希锁定依赖，并校验 SHA-256。
+4. 从 `backend-0.3.6` Release 下载 wheel 与哈希锁定依赖，并校验 SHA-256。
 5. 在默认 **Auto** 模式下，从官方 PyPI、阿里云、USTC 和清华 TUNA 分别下载同一个
    1.6 MB 探测 wheel。只有通过 SHA-256 的源参与测速，完整依赖只从最快的合格源安装，
    不会混用多个索引。也可在设置中手动固定一个源。
@@ -91,6 +91,9 @@ API Key 不会写入 Obsidian 的插件设置。**Validate setup** 会执行本�
 
 - **Dependency download source**：默认 Auto，也可固定 PyPI、阿里云、USTC、TUNA 或一个
   不含凭据的 HTTPS simple index。
+- **Network proxy**：默认继承启动 Obsidian 时的代理环境；也可填写无凭据、带端口的
+  `http://` 或 `https://` 代理，或选择 Direct 清除代理。**Test connection** 会先测试
+  插件下载器，检测到后端时再测试 Hugging Face 和 arXiv，不调用模型。
 - **Default provider**：新任务默认使用的模型供应商。
 - **API key file**：随时打开本地 `.env` 文件；API Key 不写入 Obsidian 插件设置。
 - **Advanced**：源码后端、CLI、配置路径、vault、Podcast 和取消超时等高级选项。
@@ -110,7 +113,7 @@ API Key 不会写入 Obsidian 的插件设置。**Validate setup** 会执行本�
 
 | 插件 | 后端 | Obsidian |
 | --- | --- | --- |
-| 0.4.7 | 安装器固定 0.3.5；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
+| 0.5.0 | 安装器固定 0.3.6；运行时接受 0.3.1 至小于 0.4.0 | 1.5.0 或更高版本，桌面版 |
 
 ## 故障排查
 
@@ -128,7 +131,7 @@ PaperBrain Console 不依赖其他 Obsidian 插件。以下插件可按需搭配
 
 | 插件 | ID | 用途 |
 | --- | --- | --- |
-| BRAT | `obsidian42-brat` | 从 GitHub Release 安装和更新 PaperBrain beta |
+| BRAT | `obsidian42-brat` | 从 GitHub Release 安装和更新 PaperBrain |
 | Dataview | `dataview` | 查询论文属性并构建阅读与复现队列 |
 | Audio Player | `obsidian-audio-player` | 播放生成的 Podcast 音频 |
 | floating toc | `floating-toc` | 导航长篇研究笔记和简报 |

@@ -1,10 +1,11 @@
-const { ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, normalizePath, requestUrl, setIcon } = require("obsidian");
+const { ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, normalizePath, setIcon } = require("obsidian");
 const childProcess = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
   buildInvocation,
+  buildManagedEnvironment,
   buildSpawnOptions,
   cliExecutableForEnv,
   condaExecutableCandidates,
@@ -22,6 +23,7 @@ const {
 } = require("./runtime");
 const { ProcessManager } = require("./process-manager");
 const { BackendInstaller } = require("./backend-installer");
+const { downloadHttpsBuffer } = require("./proxy-download");
 const { BACKEND_RELEASE } = require("./backend-release");
 const { MINIFORGE_RELEASE, resolveMiniforgeAsset } = require("./miniforge-release");
 const {
@@ -35,7 +37,7 @@ const {
 const VIEW_TYPE = "paperbrain-console-view";
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 5,
+  settingsVersion: 6,
   executionMode: "auto",
   cliPath: "",
   pythonPath: "",
@@ -53,6 +55,8 @@ const DEFAULT_SETTINGS = {
   managedRuntimePath: "",
   dependencySource: "auto",
   customDependencyIndex: "",
+  proxyMode: "inherit",
+  proxyUrl: "",
 };
 
 const PANELS = [
@@ -165,11 +169,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
     });
     this.backendInstaller = new BackendInstaller({
       spawn: childProcess.spawn,
-      download: async (url) => {
-        const response = await requestUrl({ url, method: "GET", throw: false });
-        if (response.status !== 200) throw new Error(`Download failed with HTTP ${response.status}: ${url}`);
-        return Buffer.from(response.arrayBuffer);
-      },
+      download: downloadHttpsBuffer,
     });
     const firstStart = !stored.settingsVersion;
     const migratedLegacyPath = Boolean(stored.repoPath && !stored.backendPath);
@@ -338,8 +338,10 @@ module.exports = class PaperBrainPlugin extends Plugin {
     }
     const condaPath = await this.detectCondaExecutable();
     let dependencyIndex;
+    let environment;
     try {
       dependencyIndex = resolveDependencyIndex(this.settings);
+      environment = buildManagedEnvironment(this.settings, process.env);
     } catch (error) {
       new Notice(error.message, 9000);
       return false;
@@ -360,6 +362,9 @@ module.exports = class PaperBrainPlugin extends Plugin {
       vaultPath: this.settings.vaultPath,
       release: BACKEND_RELEASE,
       dependencyIndex,
+      environment,
+      proxyMode: this.settings.proxyMode,
+      proxyUrl: this.settings.proxyUrl,
     });
     if (!accepted) return false;
     const result = await this.backendInstaller.install({
@@ -379,7 +384,7 @@ module.exports = class PaperBrainPlugin extends Plugin {
       return false;
     }
     Object.assign(this.settings, {
-      settingsVersion: 5,
+      settingsVersion: 6,
       executionMode: "cli",
       cliPath: result.cliPath,
       pythonPath: result.pythonPath,
@@ -392,6 +397,60 @@ module.exports = class PaperBrainPlugin extends Plugin {
     });
     await this.saveSettings();
     new Notice("PaperBrain backend is ready. Add your provider key to .env, then validate setup.", 9000);
+    return true;
+  }
+
+  async testNetworkConnection() {
+    if (this.backendInstaller.snapshot().running || this.processManager.snapshot().running) {
+      new Notice("Wait for the active PaperBrain task before testing the connection.");
+      return false;
+    }
+    let environment;
+    try {
+      environment = buildManagedEnvironment(this.settings, process.env);
+      const url = `https://huggingface.co/api/daily_papers?date=${encodeURIComponent(yesterday())}`;
+      const started = Date.now();
+      const bytes = await downloadHttpsBuffer(url, {
+        proxyMode: this.settings.proxyMode,
+        proxyUrl: this.settings.proxyUrl,
+        env: environment,
+        timeoutMs: 30000,
+        maxBytes: 8 * 1024 * 1024,
+      });
+      let payload = JSON.parse(bytes.toString("utf8"));
+      if (payload && !Array.isArray(payload) && typeof payload === "object") {
+        payload = payload.papers || payload.daily_papers || payload.results;
+      }
+      if (!Array.isArray(payload)) throw new Error("Hugging Face returned an unexpected payload.");
+      this.processManager.appendLog(`network test: Hugging Face passed in ${Date.now() - started} ms`);
+    } catch (error) {
+      this.processManager.appendLog(`network test failed: ${error && error.name ? error.name : "Error"}`);
+      new Notice("PaperBrain connection test failed. Check the proxy mode and URL.", 9000);
+      return false;
+    }
+
+    const validation = this.validateConfiguration(false);
+    if (!validation.ok) {
+      new Notice("Plugin download connection passed. Install or detect the backend to run full diagnostics.", 8000);
+      return true;
+    }
+    const commandArgs = ["doctor", "network", "--live"];
+    const invocation = buildInvocation(this.settings, commandArgs, { existsSync: fs.existsSync });
+    const result = this.processManager.start({
+      invocation,
+      commandArgs,
+      spawnOptions: buildSpawnOptions(this.settings, invocation, environment),
+      timeoutMs: Math.max(3, Number(this.settings.cancelTimeoutSeconds || 20)) * 1000,
+      context: { date: yesterday(), provider: this.settings.provider, mode: "doctor", doctorScope: "network" },
+      notify: false,
+    });
+    if (!result.started) return false;
+    const outcome = await result.completion;
+    if (!outcome.ok) {
+      new Notice("Plugin download passed, but backend network diagnostics failed.", 9000);
+      return false;
+    }
+    new Notice("PaperBrain network connection passed.");
     return true;
   }
 
@@ -1960,6 +2019,39 @@ class PaperBrainSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.display();
         }));
+    new Setting(containerEl)
+      .setName("Network proxy")
+      .setDesc("Applies to PaperBrain runs, diagnostics, and installation inside Obsidian. Terminal installation keeps the terminal's own environment.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("inherit", "Inherit Obsidian environment")
+        .addOption("manual", "Manual HTTP(S) proxy")
+        .addOption("direct", "Direct connection")
+        .setValue(this.plugin.settings.proxyMode)
+        .onChange(async (value) => {
+          this.plugin.settings.proxyMode = value;
+          await this.plugin.saveSettings();
+          this.display();
+        }))
+      .addButton((button) => button
+        .setButtonText("Test connection")
+        .setDisabled(this.plugin.backendInstaller.snapshot().running || this.plugin.processManager.snapshot().running)
+        .onClick(async () => {
+          await this.plugin.activateView();
+          await this.plugin.testNetworkConnection();
+          this.display();
+        }));
+    if (this.plugin.settings.proxyMode === "manual") {
+      new Setting(containerEl)
+        .setName("Proxy URL")
+        .setDesc("HTTP or HTTPS origin with an explicit port. Credentials, paths, queries, and fragments are rejected.")
+        .addText((input) => input
+          .setPlaceholder("http://127.0.0.1:7890")
+          .setValue(this.plugin.settings.proxyUrl)
+          .onChange(async (value) => {
+            this.plugin.settings.proxyUrl = value.trim();
+            await this.plugin.saveSettings();
+          }));
+    }
     new Setting(containerEl)
       .setName("Default provider")
       .addDropdown((dropdown) => dropdown

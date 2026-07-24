@@ -2,13 +2,13 @@
 
 PaperBrain Console has no required Obsidian plugin dependencies. The first ten
 community plugins below are enabled in the development vault and were checked
-with PaperBrain Console 0.4.7. The final two are installed locally but are not
+with PaperBrain Console 0.5.0. The final two are installed locally but are not
 currently enabled, so their integration is not claimed as tested. Install only
 the capabilities that fit your workflow.
 
 | Plugin | Local version | Status | PaperBrain workflow | Notes |
 | --- | ---: | --- | --- | --- |
-| BRAT (`obsidian42-brat`) | 2.0.2 | Enabled and checked | Install and update the PaperBrain beta from GitHub Releases | Recommended only while PaperBrain is in beta. |
+| BRAT (`obsidian42-brat`) | 2.0.2 | Enabled and checked | Install and update PaperBrain from GitHub Releases | Uses the latest compatible GitHub Release. |
 | Dataview (`dataview`) | 0.5.68 | Enabled and checked | Query PaperBrain note properties and build research queues | PaperBrain-generated Markdown remains usable without Dataview. |
 | Audio Player (`obsidian-audio-player`) | 0.1.1 | Enabled and checked | Play generated podcast audio with richer controls | Optional; Obsidian's native audio element remains supported. |
 | floating toc (`floating-toc`) | 2.7.1 | Enabled and checked | Navigate long deep-analysis notes and research briefs | Most useful in reading views, not the console itself. |

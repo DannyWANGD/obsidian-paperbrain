@@ -103,13 +103,13 @@ test("terminal installation exposes verified commands for Windows, macOS, and Li
 
   assert.equal(plugin.showManualBackendInstall(), true);
   assert.ok(openedModalDetails);
-  assert.equal(openedModalDetails.backendVersion, "0.3.5");
+  assert.equal(openedModalDetails.backendVersion, "0.3.6");
   assert.deepEqual(Object.keys(openedModalDetails.commands).sort(), ["darwin", "linux", "win32"]);
   assert.match(openedModalDetails.commands.win32, /install-backend\.ps1/);
   assert.match(openedModalDetails.commands.darwin, /install-backend\.sh/);
   assert.match(openedModalDetails.commands.linux, /sha256sum -c -/);
   for (const command of Object.values(openedModalDetails.commands)) {
-    assert.match(command, /releases\/download\/0\.4\.7/);
+    assert.match(command, /releases\/download\/0\.5\.0/);
     assert.match(command, /auto/);
   }
 });

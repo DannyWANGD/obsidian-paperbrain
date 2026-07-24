@@ -4,15 +4,15 @@ const path = require("path");
 
 const MANUAL_INSTALL_RELEASE = Object.freeze({
   repository: "DannyWANGD/obsidian-paperbrain",
-  tag: "0.4.7",
+  tag: "0.5.0",
   assets: Object.freeze({
     windows: Object.freeze({
       name: "install-backend.ps1",
-      sha256: "f34df498d0313304e30ad513066fb7dfb6d8a0270305859354ff698c370f8f53",
+      sha256: "c5f6e8b06dbbeb6f79905911cec5112088081695926271b16b2f92a316ed9ca7",
     }),
     unix: Object.freeze({
       name: "install-backend.sh",
-      sha256: "d4713253082d534e18bc5973beafd0ac7d1488a3192e37ba78ba0eb33a125e7a",
+      sha256: "12ee65bd31d540499d2b90fd7c582df2c49f27eea0adb012777bcb2c50541d53",
     }),
   }),
 });

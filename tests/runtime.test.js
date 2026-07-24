@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   boundedAppend,
   buildInvocation,
+  buildManagedEnvironment,
   buildSpawnOptions,
   buildSiblingInvocation,
   condaExecutableCandidates,
@@ -18,6 +19,7 @@ const {
   isCurrentProcess,
   mergeFailurePayload,
   normalizeDependencyIndexUrl,
+  normalizeProxyUrl,
   normalizeRuntimeSettings,
   parsePayload,
   processOutcome,
@@ -59,7 +61,7 @@ test("legacy repoPath migrates to backendPath without replacing the vault", () =
   assert.equal(settings.repoPath, undefined);
 });
 
-test("settings v2 migrate to v5 without losing user choices", () => {
+test("settings v2 migrate to v6 without losing user choices", () => {
   const settings = normalizeRuntimeSettings({
     settingsVersion: 2,
     backendPath: "D:\\backend",
@@ -67,7 +69,7 @@ test("settings v2 migrate to v5 without losing user choices", () => {
     provider: "doubao",
     paidRunDisclosureAccepted: true,
   });
-  assert.equal(settings.settingsVersion, 5);
+  assert.equal(settings.settingsVersion, 6);
   assert.equal(settings.backendPath, "D:\\backend");
   assert.equal(settings.provider, "doubao");
   assert.equal(settings.paidRunDisclosureAccepted, true);
@@ -75,6 +77,60 @@ test("settings v2 migrate to v5 without losing user choices", () => {
   assert.equal(settings.managedRuntimePath, "");
   assert.equal(settings.dependencySource, "auto");
   assert.equal(settings.customDependencyIndex, "");
+  assert.equal(settings.proxyMode, "inherit");
+  assert.equal(settings.proxyUrl, "");
+});
+
+test("manual proxy URLs require a credential-free HTTP(S) origin and explicit port", () => {
+  assert.equal(normalizeProxyUrl("http://127.0.0.1:7890"), "http://127.0.0.1:7890");
+  assert.equal(normalizeProxyUrl("https://proxy.example:8443/"), "https://proxy.example:8443");
+  assert.equal(normalizeProxyUrl("http://proxy.example:80"), "http://proxy.example:80");
+  for (const value of [
+    "http://proxy.example",
+    "socks5://127.0.0.1:1080",
+    "http://user:password@proxy.example:8080",
+    "http://proxy.example:8080/path",
+    "http://proxy.example:8080?mode=test",
+    "http://proxy.example:70000",
+  ]) {
+    assert.equal(normalizeProxyUrl(value), "", value);
+  }
+});
+
+test("managed proxy environment handles manual, direct, and inherited modes", () => {
+  const base = {
+    PATH: "bin",
+    HTTPS_PROXY: "http://old.example:8080",
+    ALL_PROXY: "socks5://old.example:1080",
+    all_proxy: "socks5://old-lower.example:1080",
+    NO_PROXY: "internal.example,localhost",
+    no_proxy: "service.example",
+  };
+  const manual = buildManagedEnvironment({
+    proxyMode: "manual",
+    proxyUrl: "http://127.0.0.1:7890",
+  }, base);
+  assert.equal(manual.HTTP_PROXY, "http://127.0.0.1:7890");
+  assert.equal(manual.HTTPS_PROXY, "http://127.0.0.1:7890");
+  assert.equal(manual.http_proxy, "http://127.0.0.1:7890");
+  assert.equal(manual.https_proxy, "http://127.0.0.1:7890");
+  assert.equal(manual.ALL_PROXY, undefined);
+  assert.equal(manual.all_proxy, undefined);
+  assert.deepEqual(new Set(manual.NO_PROXY.split(",")), new Set([
+    "internal.example", "localhost", "service.example", "127.0.0.1", "::1",
+  ]));
+  assert.equal(manual.no_proxy, manual.NO_PROXY);
+
+  const direct = buildManagedEnvironment({ proxyMode: "direct" }, base);
+  assert.equal(direct.PATH, "bin");
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]) {
+    assert.equal(direct[key], undefined, key);
+  }
+  assert.deepEqual(buildManagedEnvironment({ proxyMode: "inherit" }, base), base);
+  assert.throws(
+    () => buildManagedEnvironment({ proxyMode: "manual", proxyUrl: "http://proxy.example" }, base),
+    /explicit valid port/,
+  );
 });
 
 test("dependency downloads default to automatic source selection and accept one explicit secure simple index", () => {
@@ -250,6 +306,25 @@ test("spawn options preserve the environment and pass vault/config contracts", (
   assert.equal(defaults.env.PAPERBRAIN_VAULT_PATH, "D:\\vault");
 });
 
+test("spawn options apply direct mode before adding PaperBrain paths", () => {
+  const invocation = { cwd: "D:\\backend" };
+  const options = buildSpawnOptions({
+    vaultPath: "D:\\vault",
+    configPath: "",
+    proxyMode: "direct",
+  }, invocation, {
+    PATH: "bin",
+    HTTPS_PROXY: "http://proxy.example:8080",
+    ALL_PROXY: "socks5://proxy.example:1080",
+    NO_PROXY: "localhost",
+  });
+  assert.equal(options.env.PATH, "bin");
+  assert.equal(options.env.HTTPS_PROXY, undefined);
+  assert.equal(options.env.ALL_PROXY, undefined);
+  assert.equal(options.env.NO_PROXY, undefined);
+  assert.equal(options.env.PAPERBRAIN_VAULT_PATH, "D:\\vault");
+});
+
 test("yesterday uses local calendar components around local midnight", () => {
   assert.equal(yesterday(new Date(2026, 0, 1, 0, 15)), "2025-12-31");
   assert.equal(yesterday(new Date(2026, 6, 22, 23, 59)), "2026-07-21");
@@ -314,6 +389,7 @@ test("process outcome enforces the backend result contract and compatibility ran
 test("diagnostic copies redact credentials and local absolute paths without mutating input", () => {
   const source = {
     api_key: "top-secret",
+    proxyUrl: "http://proxy.example:8080",
     message: "Authorization=Bearer abc.def and token=visible",
     artifact: "D:\\Private Vault\\Research_Notes\\Paper.md",
     nested: [`sk-${"abcdefghijklmnop"}`, "/home/researcher/vault/Paper.md"],
@@ -321,6 +397,7 @@ test("diagnostic copies redact credentials and local absolute paths without muta
   const redacted = redactDiagnostics(source, ["D:\\Private Vault"]);
   const serialized = JSON.stringify(redacted);
   assert.equal(serialized.includes("top-secret"), false);
+  assert.equal(serialized.includes("proxy.example"), false);
   assert.equal(serialized.includes("abc.def"), false);
   assert.equal(serialized.includes("visible"), false);
   assert.equal(serialized.includes("Private Vault"), false);

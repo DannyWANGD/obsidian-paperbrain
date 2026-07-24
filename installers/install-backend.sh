@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-BACKEND_VERSION="0.3.5"
-BACKEND_TAG="backend-0.3.5"
+BACKEND_VERSION="0.3.6"
+BACKEND_TAG="backend-0.3.6"
 BACKEND_REPOSITORY="DannyWANGD/PaperBrain"
-WHEEL_NAME="paperbrain-0.3.5-py3-none-any.whl"
-WHEEL_SHA256="44e4e10fcd2fb85f6a8f2c5f92fa1149762847fe6c00687c2cb04008810f3cbb"
+WHEEL_NAME="paperbrain-0.3.6-py3-none-any.whl"
+WHEEL_SHA256="d41cf6867b74fbef00cec3438fc12c13d1d74597634afc9ff93289ac5c0de986"
 REQUIREMENTS_NAME="requirements.lock"
 REQUIREMENTS_SHA256="2a7394540a7552cd1bbbb88e9c440ae3c493e25e5d30a7c8300281831d30de7c"
 PROBE_REQUIREMENT="openai==2.46.0"

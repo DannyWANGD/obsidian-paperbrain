@@ -3,8 +3,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const SETTINGS_VERSION = 5;
+const SETTINGS_VERSION = 6;
 const EXECUTION_MODES = new Set(["auto", "cli", "python-script"]);
+const PROXY_MODES = new Set(["inherit", "manual", "direct"]);
 const DEPENDENCY_SOURCES = new Set(["auto", "pypi", "aliyun", "ustc", "tuna", "custom"]);
 const DEPENDENCY_INDEXES = Object.freeze({
   pypi: Object.freeze({
@@ -30,7 +31,17 @@ const DEPENDENCY_INDEXES = Object.freeze({
 });
 const MIN_BACKEND_VERSION = [0, 3, 1];
 const MAX_BACKEND_VERSION = [0, 4, 0];
-const SECRET_FIELD_PATTERN = /(?:api[_-]?key|authorization|password|secret|token)/i;
+const SECRET_FIELD_PATTERN = /(?:api[_-]?key|authorization|password|secret|token|proxy[_-]?url)/i;
+const PROXY_ENV_KEYS = Object.freeze([
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+]);
 
 function textValue(value) {
   return value === undefined || value === null ? "" : String(value).trim();
@@ -61,6 +72,51 @@ function normalizeDependencyIndexUrl(value) {
   } catch (_) {
     return "";
   }
+}
+
+function normalizeProxyUrl(value) {
+  const raw = textValue(value);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return "";
+    if (parsed.pathname && parsed.pathname !== "/") return "";
+    const authority = raw.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)\/?$/i);
+    const portMatch = authority && authority[1].match(/:(\d+)$/);
+    const port = portMatch ? Number(portMatch[1]) : 0;
+    if (!parsed.hostname || !Number.isInteger(port) || port < 1 || port > 65535) return "";
+    return `${parsed.protocol}//${parsed.hostname}:${port}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildManagedEnvironment(settings = {}, baseEnv = process.env) {
+  const env = { ...(baseEnv || {}) };
+  const mode = PROXY_MODES.has(textValue(settings.proxyMode)) ? textValue(settings.proxyMode) : "inherit";
+  if (mode === "inherit") return env;
+
+  const existingNoProxy = [env.NO_PROXY, env.no_proxy]
+    .flatMap((value) => textValue(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const key of PROXY_ENV_KEYS) delete env[key];
+  if (mode === "direct") return env;
+
+  const proxyUrl = normalizeProxyUrl(settings.proxyUrl);
+  if (!proxyUrl) {
+    throw new Error("Manual proxy must be a credential-free HTTP(S) origin with an explicit valid port.");
+  }
+  env.HTTP_PROXY = proxyUrl;
+  env.HTTPS_PROXY = proxyUrl;
+  env.http_proxy = proxyUrl;
+  env.https_proxy = proxyUrl;
+  const noProxy = [...new Set([...existingNoProxy, "localhost", "127.0.0.1", "::1"])]
+    .join(",");
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
+  return env;
 }
 
 function resolveDependencyIndex(settings = {}) {
@@ -251,6 +307,8 @@ function normalizeRuntimeSettings(raw = {}, options = {}) {
     managedRuntimePath: textValue(raw.managedRuntimePath),
     dependencySource: DEPENDENCY_SOURCES.has(textValue(raw.dependencySource)) ? textValue(raw.dependencySource) : "auto",
     customDependencyIndex: textValue(raw.customDependencyIndex),
+    proxyMode: PROXY_MODES.has(textValue(raw.proxyMode)) ? textValue(raw.proxyMode) : "inherit",
+    proxyUrl: textValue(raw.proxyUrl),
   };
 }
 
@@ -338,6 +396,9 @@ function validateRuntimeSettings(settings, options = {}) {
   const warnings = [];
   const vaultPath = textValue(settings.vaultPath);
   const configPath = textValue(settings.configPath);
+  if (textValue(settings.proxyMode) === "manual" && !normalizeProxyUrl(settings.proxyUrl)) {
+    errors.push("Manual proxy must be a credential-free HTTP(S) origin with an explicit valid port.");
+  }
   if (!vaultPath) {
     errors.push("Vault path is empty. Reopen the vault or set it in PaperBrain settings.");
   } else if (!pathExists(vaultPath, existsSync)) {
@@ -385,7 +446,7 @@ function buildSiblingInvocation(invocation, commandArgs) {
 }
 
 function buildSpawnOptions(settings, invocation, baseEnv = process.env) {
-  const env = { ...(baseEnv || {}) };
+  const env = buildManagedEnvironment(settings, baseEnv);
   const vaultPath = textValue(settings.vaultPath);
   if (vaultPath) env.PAPERBRAIN_VAULT_PATH = vaultPath;
   else delete env.PAPERBRAIN_VAULT_PATH;
@@ -591,6 +652,7 @@ module.exports = {
   backendScriptPath,
   boundedAppend,
   buildInvocation,
+  buildManagedEnvironment,
   buildSiblingInvocation,
   buildSpawnOptions,
   cliExecutableForEnv,
@@ -606,6 +668,7 @@ module.exports = {
   mergeFailurePayload,
   normalizeRuntimeSettings,
   normalizeDependencyIndexUrl,
+  normalizeProxyUrl,
   parsePayload,
   parseCondaEnvironmentList,
   pythonExecutableForEnv,

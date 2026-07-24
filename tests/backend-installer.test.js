@@ -18,11 +18,11 @@ function sha(bytes) {
 function fixtureRelease(wheel, requirements, probe = Buffer.from("probe-wheel")) {
   return {
     repository: "example/PaperBrain",
-    version: "0.3.5",
-    tag: "backend-0.3.5",
+    version: "0.3.6",
+    tag: "backend-0.3.6",
     dependencyProbe: { requirement: "probe-package==1.0.0", sha256: sha(probe) },
     assets: {
-      wheel: { name: "paperbrain-0.3.5-py3-none-any.whl", sha256: sha(wheel) },
+      wheel: { name: "paperbrain-0.3.6-py3-none-any.whl", sha256: sha(wheel) },
       requirements: { name: "requirements.lock", sha256: sha(requirements) },
     },
   };
@@ -180,6 +180,62 @@ test("automatic source selection probes real wheels and uses only the fastest ve
   const dependencyCall = calls.find((call) => call.args[0] === "-m" && call.args[2] === "install" && call.args.includes("--require-hashes"));
   assert.equal(dependencyCall.args[dependencyCall.args.indexOf("--index-url") + 1], USTC_INDEX.url);
   assert.equal(dependencyCall.args.includes(PYPI_INDEX.url), false);
+});
+
+test("installation downloads and child processes share the selected proxy environment", async (t) => {
+  const root = await temporaryRoot(t);
+  const wheel = Buffer.from("wheel");
+  const requirements = Buffer.from("requirements");
+  const release = fixtureRelease(wheel, requirements);
+  const envPath = path.join(root, "envs", "wd");
+  const spawnOptions = [];
+  const downloadOptions = [];
+  const spawn = (executable, args, options) => {
+    spawnOptions.push(options);
+    if (args[0] === "--version") return completedChild("conda 26.3.1\n");
+    if (args[0] === "env") return completedChild(JSON.stringify({ envs: [envPath] }));
+    if (args[0] === "-c") return completedChild(compatibleRuntime([3, 9, 18]));
+    if (args[0] === "bootstrap") {
+      return completedChild(JSON.stringify({
+        ok: true,
+        command: "bootstrap",
+        config_path: path.join(root, "config", "config.yaml"),
+        env_path: path.join(root, "config", ".env"),
+      }));
+    }
+    return completedChild();
+  };
+  const installer = new BackendInstaller({
+    spawn,
+    download: async (url, options) => {
+      downloadOptions.push(options);
+      return url.endsWith("requirements.lock") ? requirements : wheel;
+    },
+  });
+  const environment = {
+    PATH: "bin",
+    HTTP_PROXY: "http://127.0.0.1:7890",
+    HTTPS_PROXY: "http://127.0.0.1:7890",
+  };
+
+  const result = await installer.install({
+    condaExecutable: path.join(root, "conda"),
+    configDir: path.join(root, "config"),
+    vaultPath: path.join(root, "vault"),
+    release,
+    dependencyIndex: TUNA_INDEX,
+    environment,
+    proxyMode: "manual",
+    proxyUrl: "http://127.0.0.1:7890",
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(spawnOptions.length > 0);
+  assert.ok(spawnOptions.every((options) => options.env.HTTPS_PROXY === environment.HTTPS_PROXY));
+  assert.equal(downloadOptions.length, 2);
+  assert.ok(downloadOptions.every((options) => options.proxyMode === "manual"));
+  assert.ok(downloadOptions.every((options) => options.proxyUrl === "http://127.0.0.1:7890"));
+  assert.ok(downloadOptions.every((options) => options.env.HTTPS_PROXY === environment.HTTPS_PROXY));
 });
 
 test("an existing wd below Python 3.9 stops before any backend download", async (t) => {

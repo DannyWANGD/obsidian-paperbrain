@@ -58,7 +58,7 @@ test("backend installer assets are versioned, checksummed, and documented", () =
   assert.match(readme, /Miniforge 26\.3\.2-2/);
   assert.match(readme, /does not modify\s+(?:the )?system PATH/i);
   assert.match(readme, /~\/\.paperbrain\/runtime\/miniforge3/);
-  assert.match(readme, /backend-0\.3\.5/);
+  assert.match(readme, /backend-0\.3\.6/);
   assert.match(readme, /install-backend\.ps1/);
   assert.match(readme, /install-backend\.sh/);
 });
@@ -73,7 +73,7 @@ test("Chinese and English setup guides are switchable and installation-complete"
     for (const asset of ["main.js", "manifest.json", "styles.css", "install-backend.ps1", "install-backend.sh", "checksums.txt"]) {
       assert.equal(readme.includes(`\`${asset}\``), true, `${asset} should be explained in both READMEs`);
     }
-    assert.match(readme, /backend-0\.3\.5/);
+    assert.match(readme, /backend-0\.3\.6/);
     assert.match(readme, /Miniforge 26\.3\.2-2/);
     assert.match(readme, /\.paperbrain[\\/]runtime[\\/]miniforge3/);
     assert.match(readme, /\.paperbrain[\\/]config/);
@@ -105,13 +105,13 @@ test("optional companion plugin snapshot stays versioned and dependency-free", (
   }
 });
 
-test("release workflow publishes the beta assets as a prerelease", () => {
+test("release workflow publishes the stable release assets", () => {
   const workflow = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8");
   assert.match(workflow, /gh release create/);
   assert.match(workflow, /installers\/install-backend\.ps1 installers\/install-backend\.sh checksums\.txt/);
   assert.match(workflow, /bash -n installers\/install-backend\.sh/);
   assert.match(workflow, /Language\.Parser/);
-  assert.match(workflow, /--prerelease/);
+  assert.doesNotMatch(workflow, /--prerelease/);
 });
 
 test("generated and local-only files stay outside source commits", () => {

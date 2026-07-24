@@ -20,6 +20,8 @@ class BackendInstaller {
     this.now = options.now || Date.now;
     this.listeners = new Set();
     this.child = null;
+    this.commandEnv = null;
+    this.downloadOptions = null;
     this.disposed = false;
     this.state = this.emptyState();
   }
@@ -72,6 +74,12 @@ class BackendInstaller {
     const installContext = { managedRootCreated: false, managedRuntimeReady: false };
     try {
       this.validatePlan(plan);
+      this.commandEnv = { ...(plan.environment || process.env) };
+      this.downloadOptions = {
+        proxyMode: plan.proxyMode || "inherit",
+        proxyUrl: plan.proxyUrl || "",
+        env: this.commandEnv,
+      };
       tempDir = await this.fs.mkdtemp(this.path.join(this.os.tmpdir(), "paperbrain-installer-"));
       const conda = await this.ensureConda(plan, tempDir, installContext);
       this.setStage("detecting", "Checking the selected Conda installation for a wd environment.");
@@ -161,6 +169,8 @@ class BackendInstaller {
       }
       this.state.running = false;
       this.state.stopping = false;
+      this.commandEnv = null;
+      this.downloadOptions = null;
       this.emit("finished");
     }
   }
@@ -261,7 +271,7 @@ class BackendInstaller {
   }
 
   async downloadVerifiedAsset(url, asset, tempDir) {
-    const bytes = await this.download(url);
+    const bytes = await this.download(url, this.downloadOptions || {});
     const actual = crypto.createHash("sha256").update(bytes).digest("hex");
     if (actual !== asset.sha256) throw new Error(`SHA-256 verification failed for ${asset.name}.`);
     const target = this.path.join(tempDir, asset.name);
@@ -361,7 +371,10 @@ class BackendInstaller {
       let stdout = "";
       let stderr = "";
       let settled = false;
-      const child = this.spawn(executable, args, { windowsHide: true, env: { ...process.env } });
+      const child = this.spawn(executable, args, {
+        windowsHide: true,
+        env: { ...(this.commandEnv || process.env) },
+      });
       this.child = child;
       child.stdout.on("data", (data) => {
         const text = String(data);

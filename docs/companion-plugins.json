@@ -1,8 +1,8 @@
 {
-  "paperbrainVersion": "0.4.7",
+  "paperbrainVersion": "0.5.0",
   "required": [],
   "testedOptional": [
-    { "id": "obsidian42-brat", "version": "2.0.2", "role": "beta-installation" },
+    { "id": "obsidian42-brat", "version": "2.0.2", "role": "release-installation" },
     { "id": "dataview", "version": "0.5.68", "role": "research-queries" },
     { "id": "obsidian-audio-player", "version": "0.1.1", "role": "podcast-playback" },
     { "id": "floating-toc", "version": "2.7.1", "role": "long-note-navigation" },

@@ -7,8 +7,8 @@ PaperBrain Console is the Obsidian desktop interface for the
 installs the backend, starts or stops runs, shows progress, and opens the
 digests, research notes, PDFs, figures, and audio written to the active vault.
 
-The plugin is desktop-only because it starts local processes. Plugin `0.4.7`
-installs the fixed PaperBrain backend release `0.3.5`.
+The plugin is desktop-only because it starts local processes. Plugin `0.5.0`
+installs the fixed PaperBrain backend release `0.3.6`.
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ installation methods:
    conda-forge and installs it under `~/.paperbrain/runtime/miniforge3`. This
    private installation does not modify system PATH, initialize a shell, or
    require administrator access.
-4. Downloads the wheel and hash-locked dependencies from the `backend-0.3.5`
+4. Downloads the wheel and hash-locked dependencies from the `backend-0.3.6`
    Release and verifies their SHA-256 checksums.
 5. In the default **Auto** mode, downloads the same fixed 1.6 MB probe wheel
    from official PyPI, Alibaba Cloud, USTC, and Tsinghua TUNA. Only sources
@@ -110,6 +110,11 @@ Important settings:
 
 - **Dependency download source** defaults to Auto. You can instead select
   PyPI, Alibaba Cloud, USTC, TUNA, or one credential-free HTTPS simple index.
+- **Network proxy** inherits the environment that started Obsidian by default.
+  You can instead provide a credential-free `http://` or `https://` proxy with
+  an explicit port, or select Direct to clear proxies. **Test connection**
+  checks the plugin downloader and, when available, the backend's Hugging Face
+  and arXiv connections without calling a model.
 - **Default provider** selects the provider used for new runs.
 - **API key file** always opens the local `.env` file; API keys are not stored
   in Obsidian plugin settings.
@@ -137,7 +142,7 @@ and terms.
 
 | Plugin | Backend | Obsidian |
 | --- | --- | --- |
-| 0.4.7 | Installer pins 0.3.5; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
+| 0.5.0 | Installer pins 0.3.6; runtime accepts 0.3.1 to <0.4.0 | 1.5.0 or later, desktop |
 
 ## Troubleshooting
 
@@ -161,7 +166,7 @@ can be added as needed:
 
 | Plugin | ID | Use |
 | --- | --- | --- |
-| BRAT | `obsidian42-brat` | Install and update PaperBrain beta from GitHub Releases |
+| BRAT | `obsidian42-brat` | Install and update PaperBrain from GitHub Releases |
 | Dataview | `dataview` | Query paper properties and build reading or reproduction queues |
 | Audio Player | `obsidian-audio-player` | Play generated podcast audio |
 | floating toc | `floating-toc` | Navigate long research notes and briefs |
