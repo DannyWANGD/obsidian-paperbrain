@@ -5,6 +5,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-24
+
+### Changed
+
+- The backend installation log viewport is taller, increasing its maximum
+  height from 240px to 400px.
+
 ## [0.4.3] - 2026-07-24
 
 ### Changed
@@ -124,7 +131,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Cancellation timers are bound to one process, and plugin shutdown terminates
   every child process owned by the plugin.
 
-[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...HEAD
+[Unreleased]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.4...HEAD
+[0.4.4]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.3...0.4.4
 [0.4.3]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.2...0.4.3
 [0.4.2]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.1...0.4.2
 [0.4.1]: https://github.com/DannyWANGD/obsidian-paperbrain/compare/0.4.0...0.4.1

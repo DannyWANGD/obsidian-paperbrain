@@ -678,7 +678,7 @@
 }
 
 .paperbrain-install-status pre {
-  max-height: 240px;
+  max-height: 400px;
   margin: 0;
   padding: var(--size-4-2);
   overflow: auto;
